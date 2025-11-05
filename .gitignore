@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.ruff_cache/
+.pytest_cache/
+
+# Editors/OS
+.vscode/
+.idea/
+.DS_Store
+
+# Env & local config
+.env
+*.env
+apps/backend/.env
+apps/backend/.env.local
+
+# Caches / build
+dist/
+build/
+
+# Node (if/when you add a frontend)
+node_modules/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Uvicorn reload state
+*.pid
+
+# Prompt file
+./travxy.md
