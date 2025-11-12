@@ -22,8 +22,8 @@ function ActivityRow({ a }: { a: Activity }) {
 }
 
 export default function App() {
-  const [lon, setLon] = useState(2.3522);
-  const [lat, setLat] = useState(48.8566);
+  const [lon, setLon] = useState(34.80999280643561);
+  const [lat, setLat] = useState(30.61708778782791);
   const [interests, setInterests] = useState("views,food,culture");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<PlanResponse | null>(null);
