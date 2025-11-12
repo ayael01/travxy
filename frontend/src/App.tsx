@@ -1,6 +1,8 @@
 import { useState } from "react";
+import MapPicker from "./components/MapPicker";
 import { planTrip } from "./services/api";
 import type { Activity, PlanResponse, TripRequest } from "./types";
+
 
 function ActivityRow({ a }: { a: Activity }) {
   const [lon, lat] = a.location;
@@ -94,6 +96,15 @@ export default function App() {
           {loading ? "Planning…" : "Plan day"}
         </button>
       </form>
+
+      <MapPicker
+        lon={Number(lon)}
+        lat={Number(lat)}
+        onChange={(newLon, newLat) => {
+          setLon(newLon);
+          setLat(newLat);
+        }}
+      />
 
       {err && (
         <div className="mb-4 rounded border border-red-200 bg-red-50 p-3 text-red-700">
