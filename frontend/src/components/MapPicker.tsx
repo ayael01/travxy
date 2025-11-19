@@ -1,4 +1,8 @@
-import L, { type LatLngExpression, type Map as LeafletMap, type LeafletMouseEvent } from "leaflet";
+import L, {
+    type LatLngExpression,
+    type Map as LeafletMap,
+    type LeafletMouseEvent,
+} from "leaflet";
 
 import { useEffect, useMemo, useRef } from "react";
 import { MapContainer, Marker, TileLayer, useMapEvents } from "react-leaflet";
@@ -27,7 +31,7 @@ type Props = {
 function ClickHandler({ onChange }: { onChange: (lon: number, lat: number) => void }) {
     useMapEvents({
         click(e: LeafletMouseEvent) {
-            // Leaflet gives lat,lng — our API expects [lon, lat]
+            // Leaflet gives lat,lng - our API expects [lon, lat]
             onChange(e.latlng.lng, e.latlng.lat);
         },
     });
@@ -46,29 +50,18 @@ export default function MapPicker({ lon, lat, onChange }: Props) {
     }, [center]);
 
     return (
-        <div
-            style={{
-                height: 420,
-                width: "100%",
-                borderRadius: 12,
-                overflow: "hidden",
-                border: "1px solid #333",
-            }}
+        <MapContainer
+            ref={mapRef}
+            center={center}
+            zoom={13}
+            style={{ height: 520, width: "100%" }}
         >
-            <MapContainer
-                ref={mapRef}
-                center={center}
-                zoom={13}
-                style={{ height: "100%", width: "100%" }}
-            >
-                <TileLayer
-                    // `attribution` is a valid Leaflet/TileLayer option
-                    attribution="&copy; OpenStreetMap"
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                />
-                <ClickHandler onChange={onChange} />
-                <Marker position={center} />
-            </MapContainer>
-        </div>
+            <TileLayer
+                attribution="&copy; OpenStreetMap"
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+            <ClickHandler onChange={onChange} />
+            <Marker position={center} />
+        </MapContainer>
     );
 }

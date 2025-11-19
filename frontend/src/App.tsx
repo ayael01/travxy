@@ -18,7 +18,6 @@ function ActivityRow({ a }: { a: Activity }) {
   };
 
   const meta = typeMeta[a.type];
-
   const mapsUrl = `https://www.google.com/maps?q=${lat},${lon}`;
 
   return (
@@ -47,9 +46,7 @@ function ActivityRow({ a }: { a: Activity }) {
         </div>
       </div>
       {a.source_id ? (
-        <div className="activity-meta">
-          id: {a.source_id.slice(0, 10)}…
-        </div>
+        <div className="activity-meta">id: {a.source_id.slice(0, 10)}…</div>
       ) : null}
     </div>
   );
@@ -62,12 +59,14 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<PlanResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(true);
 
   async function onPlan(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setErr(null);
     setData(null);
+
     const payload: TripRequest = {
       geometry: { type: "Point", coordinates: [Number(lon), Number(lat)] },
       days: 1,
@@ -78,6 +77,7 @@ export default function App() {
         .filter(Boolean),
       travel_mode: "car",
     };
+
     try {
       const res = await planTrip(payload);
       setData(res);
@@ -90,8 +90,7 @@ export default function App() {
 
   const day = data?.itinerary?.[0];
   const activities = day?.activities ?? [];
-  const radius =
-    (data?.query?.["radius_m"] as number | undefined) ?? undefined;
+  const radius = (data?.query?.["radius_m"] as number | undefined) ?? undefined;
 
   return (
     <div className="app-shell">
@@ -112,142 +111,177 @@ export default function App() {
         </header>
 
         <main className="app-main">
-          <section className="panel panel-form">
-            <h2 className="panel-title">Trip settings</h2>
-            <p className="panel-desc">
-              Drop a pin on the map, choose what you are in the mood for, and
-              let Travxy compose a full day around it.
-            </p>
-
-            <form onSubmit={onPlan} className="form-grid">
-              <div className="form-row">
-                <label className="form-label">
-                  <span>Longitude</span>
-                  <input
-                    className="input"
-                    type="number"
-                    step="0.0001"
-                    value={lon}
-                    onChange={(e) => setLon(Number(e.target.value))}
-                  />
-                </label>
-                <label className="form-label">
-                  <span>Latitude</span>
-                  <input
-                    className="input"
-                    type="number"
-                    step="0.0001"
-                    value={lat}
-                    onChange={(e) => setLat(Number(e.target.value))}
-                  />
-                </label>
-              </div>
-
-              <label className="form-label">
-                <span>Interests</span>
-                <input
-                  className="input"
-                  type="text"
-                  value={interests}
-                  onChange={(e) => setInterests(e.target.value)}
-                  placeholder="hiking,views,food"
-                />
-                <div className="form-hint">
-                  Comma separated - for now we keep it simple.
-                </div>
-              </label>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="btn-primary"
-              >
-                {loading ? "Planning your perfect day..." : "Plan my day"}
-              </button>
-            </form>
-
-            {err && (
-              <div className="alert alert-error">
-                <strong>Oops.</strong> {err}
-              </div>
-            )}
-
-            {data && (
-              <div className="summary-chip">
-                <span>
-                  Radius: {radius ? `${radius} m` : "unknown"} • Status:{" "}
-                  {data.status}
-                </span>
-                {day && (
-                  <span>
-                    Total: {day.total_duration_hours.toFixed(1)} h •{" "}
-                    {activities.length} stops
-                  </span>
-                )}
-              </div>
-            )}
-          </section>
-
-          <section className="panel panel-map">
-            <h2 className="panel-title">Pick your spot</h2>
-            <p className="panel-desc">
-              Click anywhere on the map - we will search up to 15 km around
-              that point and build a route.
-            </p>
-            <MapPicker
-              lon={Number(lon)}
-              lat={Number(lat)}
-              onChange={(newLon, newLat) => {
-                setLon(newLon);
-                setLat(newLat);
-              }}
-            />
-          </section>
-        </main>
-
-        <section className="panel panel-itinerary">
-          <div className="panel-itinerary-header">
-            <div>
-              <h2 className="panel-title">Your day plan</h2>
+          {/* Map + floating settings */}
+          <section className="panel panel-map-full">
+            <div className="panel-map-header">
+              <h2 className="panel-title">Pick your spot</h2>
               <p className="panel-desc">
-                Activities are ordered for a smooth, realistic flow. You can
-                open each stop in Google Maps.
+                Click anywhere on the map, or adjust the coordinates in the
+                trip settings. Travxy will search up to 15 km around that point
+                and build a route.
               </p>
             </div>
-            {day && (
-              <div className="day-badge">
-                Day {day.day} • {day.total_duration_hours.toFixed(1)} h
+
+            <div className="map-wrapper">
+              <MapPicker
+                lon={Number(lon)}
+                lat={Number(lat)}
+                onChange={(newLon, newLat) => {
+                  setLon(newLon);
+                  setLat(newLat);
+                }}
+              />
+
+              {/* Floating trip settings card */}
+              <div
+                className={
+                  "settings-float" + (settingsOpen ? " settings-float-open" : " settings-float-closed")
+                }
+              >
+                <div className="settings-float-header">
+                  <h3 className="panel-title">Trip settings</h3>
+                  <button
+                    type="button"
+                    className="settings-float-close"
+                    onClick={() => setSettingsOpen(false)}
+                    aria-label="Hide trip settings"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <p className="panel-desc settings-float-desc">
+                  Adjust the starting point and what you are in the mood for,
+                  then generate your day.
+                </p>
+
+                <form onSubmit={onPlan} className="form-grid">
+                  <div className="form-row">
+                    <label className="form-label">
+                      <span>Longitude</span>
+                      <input
+                        className="input"
+                        type="number"
+                        step="0.0001"
+                        value={lon}
+                        onChange={(e) => setLon(Number(e.target.value))}
+                      />
+                    </label>
+                    <label className="form-label">
+                      <span>Latitude</span>
+                      <input
+                        className="input"
+                        type="number"
+                        step="0.0001"
+                        value={lat}
+                        onChange={(e) => setLat(Number(e.target.value))}
+                      />
+                    </label>
+                  </div>
+
+                  <label className="form-label">
+                    <span>Interests</span>
+                    <input
+                      className="input"
+                      type="text"
+                      value={interests}
+                      onChange={(e) => setInterests(e.target.value)}
+                      placeholder="hiking,views,food"
+                    />
+                    <div className="form-hint">
+                      Comma separated - for now we keep it simple.
+                    </div>
+                  </label>
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="btn-primary"
+                  >
+                    {loading ? "Planning your perfect day..." : "Plan my day"}
+                  </button>
+
+                  {err && (
+                    <div className="alert alert-error">
+                      <strong>Oops.</strong> {err}
+                    </div>
+                  )}
+
+                  {data && (
+                    <div className="summary-chip">
+                      <span>
+                        Radius: {radius ? `${radius} m` : "unknown"} • Status:{" "}
+                        {data.status}
+                      </span>
+                      {day && (
+                        <span>
+                          Total: {day.total_duration_hours.toFixed(1)} h •{" "}
+                          {activities.length} stops
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </form>
+              </div>
+
+              {/* Small pill to reopen settings when they are closed */}
+              {!settingsOpen && (
+                <button
+                  type="button"
+                  className="settings-toggle"
+                  onClick={() => setSettingsOpen(true)}
+                >
+                  Trip settings
+                </button>
+              )}
+            </div>
+          </section>
+
+          {/* Itinerary section */}
+          <section className="panel panel-itinerary">
+            <div className="panel-itinerary-header">
+              <div>
+                <h2 className="panel-title">Your day plan</h2>
+                <p className="panel-desc">
+                  Activities are ordered for a smooth, realistic flow. You can
+                  open each stop in Google Maps.
+                </p>
+              </div>
+              {day && (
+                <div className="day-badge">
+                  Day {day.day} • {day.total_duration_hours.toFixed(1)} h
+                </div>
+              )}
+            </div>
+
+            {!data && (
+              <div className="empty-state">
+                <div className="empty-title">No plan yet</div>
+                <div className="empty-sub">
+                  Drop a pin and hit "Plan my day" to generate an itinerary.
+                </div>
               </div>
             )}
-          </div>
 
-          {!data && (
-            <div className="empty-state">
-              <div className="empty-title">No plan yet</div>
-              <div className="empty-sub">
-                Drop a pin and hit "Plan my day" to generate an itinerary.
+            {data && activities.length === 0 && (
+              <div className="empty-state">
+                <div className="empty-title">No activities found</div>
+                <div className="empty-sub">
+                  Try moving the point closer to a city or adjusting your
+                  interests.
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {data && activities.length === 0 && (
-            <div className="empty-state">
-              <div className="empty-title">No activities found</div>
-              <div className="empty-sub">
-                Try moving the point closer to a city or adjusting your
-                interests.
+            {activities.length > 0 && (
+              <div className="timeline">
+                {activities.map((a, idx) => (
+                  <ActivityRow key={idx} a={a} />
+                ))}
               </div>
-            </div>
-          )}
-
-          {activities.length > 0 && (
-            <div className="timeline">
-              {activities.map((a, idx) => (
-                <ActivityRow key={idx} a={a} />
-              ))}
-            </div>
-          )}
-        </section>
+            )}
+          </section>
+        </main>
       </div>
     </div>
   );

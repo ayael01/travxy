@@ -137,9 +137,9 @@ body {
 /* Layout */
 
 .app-main {
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.1fr);
-  gap: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
 
 .panel {
@@ -151,26 +151,18 @@ body {
   border: 1px solid rgba(148, 163, 184, 0.35);
 }
 
-.panel-form {
+/* Map panel */
+
+.panel-map-full {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
-.panel-map {
+.panel-map-header {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-
-.panel-itinerary {
-  margin-top: 18px;
-  border-radius: 18px;
-  padding: 18px 18px 20px;
-  background: linear-gradient(135deg,
-      rgba(15, 23, 42, 0.96),
-      rgba(15, 23, 42, 0.98));
-  border: 1px solid rgba(148, 163, 184, 0.4);
+  gap: 4px;
 }
 
 .panel-title {
@@ -183,6 +175,113 @@ body {
   margin: 0;
   font-size: 13px;
   color: #9ca3af;
+}
+
+/* Map and floating settings */
+
+.map-wrapper {
+  position: relative;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(75, 85, 99, 0.8);
+}
+
+/* Leaflet map */
+
+.panel-map-full .leaflet-container {
+  height: 520px;
+  width: 100%;
+}
+
+/* Floating settings card */
+
+.settings-float {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  /* put it in the top-right corner */
+  left: auto;
+  width: min(360px, 88%);
+  border-radius: 16px;
+  padding: 12px 14px 14px;
+  background: radial-gradient(circle at top left,
+      rgba(15, 23, 42, 0.98),
+      rgba(15, 23, 42, 0.98));
+  border: 1px solid rgba(148, 163, 184, 0.8);
+  box-shadow:
+    0 16px 40px rgba(15, 23, 42, 0.9),
+    0 0 0 1px rgba(15, 23, 42, 0.9);
+  z-index: 2000;
+  /* above Leaflet controls */
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease,
+    visibility 0.16s ease;
+}
+
+.settings-float-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-float-desc {
+  margin-top: 0;
+  margin-bottom: 6px;
+}
+
+.settings-float-close {
+  border: 0;
+  border-radius: 999px;
+  width: 22px;
+  height: 22px;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.9);
+  color: #9ca3af;
+  box-shadow: 0 0 0 1px rgba(55, 65, 81, 0.9);
+}
+
+.settings-float-close:hover {
+  background: rgba(30, 64, 175, 0.9);
+  color: #e5e7eb;
+}
+
+.settings-float-open {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.settings-float-closed {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-8px);
+}
+
+/* Toggle pill when settings are hidden */
+
+.settings-toggle {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  left: auto;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.8);
+  background: rgba(15, 23, 42, 0.96);
+  color: #e5e7eb;
+  cursor: pointer;
+  box-shadow:
+    0 10px 24px rgba(15, 23, 42, 0.9),
+    0 0 0 1px rgba(15, 23, 42, 0.95);
+  z-index: 2000;
+  /* above Leaflet controls */
 }
 
 /* Form */
@@ -253,7 +352,10 @@ body {
   box-shadow:
     0 10px 30px rgba(34, 211, 238, 0.35),
     0 0 0 1px rgba(15, 23, 42, 0.8);
-  transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease,
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    filter 0.12s ease,
     opacity 0.15s ease;
 }
 
@@ -299,14 +401,16 @@ body {
   justify-content: space-between;
 }
 
-/* Map */
-
-.panel-map .leaflet-container {
-  border-radius: 14px;
-  border: 1px solid rgba(75, 85, 99, 0.8);
-}
-
 /* Itinerary */
+
+.panel-itinerary {
+  border-radius: 18px;
+  padding: 18px 18px 20px;
+  background: linear-gradient(135deg,
+      rgba(15, 23, 42, 0.96),
+      rgba(15, 23, 42, 0.98));
+  border: 1px solid rgba(148, 163, 184, 0.4);
+}
 
 .panel-itinerary-header {
   display: flex;
@@ -444,16 +548,22 @@ body {
     padding: 18px 14px 20px;
   }
 
-  .app-main {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .panel {
     padding: 14px 14px 16px;
   }
 
   .panel-itinerary {
-    margin-top: 14px;
+    margin-top: 4px;
+  }
+
+  .settings-float {
+    width: min(100%, 360px);
+    left: 10px;
+    right: 10px;
+  }
+
+  .settings-toggle {
+    left: 10px;
   }
 
   .app-header {
