@@ -5,11 +5,12 @@ from typing import Any, Literal
 from app.core.config import (
     DEFAULT_SEARCH_RADIUS_M,
     GEOAPIFY_API_KEY,
+    GOOGLE_MAPS_API_KEY,
     OPENTRIPMAP_API_KEY,
     PLACES_FALLBACK,
 )
 from app.schemas.trip import Activity, DayPlan, PlanResponse, TripRequest
-from app.services.opentripmap import compose_kinds, extract_origin  # keep our helpers
+from app.services.opentripmap import compose_kinds, extract_origin
 from app.services.providers_factory import build_providers_chain
 from app.utils.duration import default_visit_duration
 from fastapi import APIRouter, HTTPException
@@ -19,14 +20,14 @@ logger = logging.getLogger("travxy.router.plan")
 
 ActivityType = Literal["hiking", "restaurant", "attraction", "viewpoint", "lodging"]
 
-# Accept only POIs from these category prefixes (works for Geoapify)
+# Geoapify categories look like: "tourism.sights", "catering.restaurant", etc.
 _ALLOWED_CATEGORY_PREFIXES = (
     "tourism.attraction",
     "tourism.sights",
     "catering",
 )
 
-# Drop roads/addresses outright
+# Drop roads/addresses outright (Geoapify)
 _BLOCKED_CATEGORY_PREFIXES = (
     "highway.",
     "address.",
@@ -34,44 +35,76 @@ _BLOCKED_CATEGORY_PREFIXES = (
 
 
 def infer_activity_type(kinds_str: str) -> ActivityType:
+    """
+    Works for:
+    - OpenTripMap kinds: "view_points", "natural", "catering", ...
+    - Geoapify categories: "tourism.sights", "catering.restaurant", ...
+    - Google types: "tourist_attraction", "restaurant", "park", "viewpoint", ...
+    """
     k = (kinds_str or "").lower()
-    if ("view_points" in k) or ("viewpoint" in k) or ("observation_tower" in k):
+
+    # Viewpoints
+    if any(x in k for x in ["view_points", "viewpoint", "observation_tower", "lookout", "scenic"]):
         return "viewpoint"
+
+    # Food
     if any(
         x in k
         for x in [
             "catering",
+            "restaurant",
             "restaurants",
             "foods",
-            "restaurant",
             "cafe",
             "fast_food",
             "food_court",
+            "bakery",
+            "bar",
         ]
     ):
         return "restaurant"
-    if ("natural" in k) or any(
+
+    # Nature / hiking
+    if any(
         x in k
-        for x in ["national_park", "forest", "protected_area", "trail", "park", "leisure.park"]
+        for x in [
+            "natural",
+            "park",
+            "leisure.park",
+            "national_park",
+            "protected_area",
+            "forest",
+            "trail",
+            "hiking_area",
+            "natural_feature",
+            "campground",
+        ]
     ):
         return "hiking"
+
     return "attraction"
 
 
-# Basic noise filters for city centers (avoid plaques / address points etc.)
 def _is_noise(kinds_str: str, name: str) -> bool:
     k = (kinds_str or "").lower()
     nm = (name or "").lower().strip()
+
+    # City-center noise
     if any(bad in k for bad in ["memorial", "plaque", "address_point"]):
         return True
-    # skip very generic, address-like names if we have better options
+
+    # Very short names are often junk
     if len(nm) <= 3:
         return True
+
+    # Some extremely generic labels can be junk
+    if nm in {"atm", "wc", "toilet", "parking", "parking lot"}:
+        return True
+
     return False
 
 
 def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
-    # distance in meters
     R = 6371000.0
     p1, p2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
@@ -80,12 +113,51 @@ def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
     return 2 * R * math.asin(math.sqrt(a))
 
 
+def _normalize_categories(item: dict[str, Any]) -> list[str]:
+    cats_raw = item.get("categories") or item.get("kinds") or ""
+    if isinstance(cats_raw, str):
+        return [c.strip() for c in cats_raw.split(",") if c.strip()]
+    if isinstance(cats_raw, list):
+        return [str(c).strip() for c in cats_raw if str(c).strip()]
+    return []
+
+
+def _looks_like_google(item: dict[str, Any]) -> bool:
+    # Your GooglePlacesProvider currently includes these keys
+    return ("user_ratings_total" in item) or ("rating" in item)
+
+
+def _looks_like_geoapify(item: dict[str, Any], cats: list[str]) -> bool:
+    # Geoapify categories usually have dot prefixes: tourism.*, catering.*, leisure.*, natural.*
+    if not cats:
+        return False
+    return any(
+        c.startswith(("tourism.", "catering.", "leisure.", "natural.", "building", "national_park"))
+        for c in cats
+    )
+
+
+def _sort_key(it: dict[str, Any]) -> tuple[float, float, int]:
+    """
+    Prefer:
+    - closer distance
+    - higher rating (Google)
+    - more ratings (Google)
+    """
+    dist = float(it.get("distance") or 1e12)
+    rating = float(it.get("rating") or 0.0)
+    rating_count = int(it.get("user_ratings_total") or 0)
+
+    # For sorting ascending: negative rating/rating_count to prefer higher values
+    return (dist, -rating, -rating_count)
+
+
 @router.post("/plan_trip", response_model=PlanResponse)
 async def plan_trip(req: TripRequest) -> PlanResponse:
-    if not (GEOAPIFY_API_KEY or OPENTRIPMAP_API_KEY):
+    if not (GOOGLE_MAPS_API_KEY or GEOAPIFY_API_KEY or OPENTRIPMAP_API_KEY):
         raise HTTPException(
             status_code=500,
-            detail="No places provider configured. Please set GEOAPIFY_API_KEY or OPENTRIPMAP_API_KEY",
+            detail="No places provider configured. Please set GOOGLE_MAPS_API_KEY, GEOAPIFY_API_KEY, or OPENTRIPMAP_API_KEY.",
         )
 
     try:
@@ -118,7 +190,6 @@ async def plan_trip(req: TripRequest) -> PlanResponse:
         if not PLACES_FALLBACK:
             break
 
-    # --- normalize + filter + sort ---
     cleaned: list[dict[str, Any]] = []
     seen_names_coords: set[tuple[str, float, float]] = set()
 
@@ -129,41 +200,32 @@ async def plan_trip(req: TripRequest) -> PlanResponse:
 
         name = (item.get("name") or "Unnamed place").strip()
         kinds_str = item.get("kinds") or ""
+        cats = _normalize_categories(item)
 
-        # categories from Geoapify come as CSV or list — normalize to list of strings
-        cats_raw = item.get("categories") or item.get("kinds") or ""
-        if isinstance(cats_raw, str):
-            cats = [c.strip() for c in cats_raw.split(",") if c.strip()]
-        elif isinstance(cats_raw, list):
-            cats = [str(c).strip() for c in cats_raw if str(c).strip()]
-        else:
-            cats = []
+        # Only apply Geoapify taxonomy filters to Geoapify-like items.
+        # Important: do NOT apply these filters to Google types (they will remove valid places).
+        if _looks_like_geoapify(item, cats) and not _looks_like_google(item):
+            if any(c.startswith(_BLOCKED_CATEGORY_PREFIXES) for c in cats):
+                continue
+            if cats and not any(c.startswith(_ALLOWED_CATEGORY_PREFIXES) for c in cats):
+                continue
 
-        # Block by categories we don't want (roads/addresses)
-        if any(c.startswith(_BLOCKED_CATEGORY_PREFIXES) for c in cats):
-            continue
-
-        # Keep only if at least one desired prefix is present
-        if cats and not any(c.startswith(_ALLOWED_CATEGORY_PREFIXES) for c in cats):
-            continue
-
-        # Name-based noise guard (very short or obvious street-like)
+        # Basic name noise guard
         if _is_noise(kinds_str, name):
             continue
         if name.lower().startswith(("rue ", "avenue ", "boulevard ", "place ")):
             continue
 
-        # De-dupe by name & proximity
         lon2 = float(point["lon"])
         lat2 = float(point["lat"])
         key_name = name.lower()
 
-        # exact sig check first (cheap)
+        # Exact signature
         sig = (key_name, round(lon2, 6), round(lat2, 6))
         if sig in seen_names_coords:
             continue
 
-        # proximity check: same name within 75 m -> skip
+        # Proximity duplicate: same name within 75m
         is_near_dup = False
         for existing in cleaned:
             if (existing.get("name") or "").lower() == key_name:
@@ -179,13 +241,8 @@ async def plan_trip(req: TripRequest) -> PlanResponse:
         item["categories"] = cats
         cleaned.append(item)
 
-    # prefer nearer items (if Geoapify provided distance), then by name
-    cleaned.sort(
-        key=lambda it: (
-            it.get("distance") or 1e12,
-            len(it.get("name") or ""),
-        )
-    )
+    # Sort: distance first, then Google quality signals if present
+    cleaned.sort(key=_sort_key)
 
     activities: list[Activity] = []
     for item in cleaned:
@@ -193,7 +250,18 @@ async def plan_trip(req: TripRequest) -> PlanResponse:
         point = item.get("point") or {}
         name = item.get("name") or "Unnamed place"
         kinds_str = item.get("kinds") or ""
+
         a_type: ActivityType = infer_activity_type(kinds_str)
+
+        # Optional: store rating in notes (helps you debug quality quickly)
+        rating = item.get("rating")
+        rating_count = item.get("user_ratings_total")
+        notes = None
+        if rating is not None:
+            if rating_count is not None:
+                notes = f"rating {rating} ({rating_count})"
+            else:
+                notes = f"rating {rating}"
 
         activities.append(
             Activity(
@@ -202,6 +270,7 @@ async def plan_trip(req: TripRequest) -> PlanResponse:
                 duration_minutes=default_visit_duration(kinds_str),
                 location=[float(point["lon"]), float(point["lat"])],
                 source_id=xid if xid else None,
+                notes=notes,
             )
         )
         if len(activities) >= 6:
