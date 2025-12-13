@@ -139,6 +139,8 @@ export default function App() {
   const day = data?.itinerary?.[0];
   const activities = day?.activities ?? [];
   const radius = (data?.query?.["radius_m"] as number | undefined) ?? undefined;
+  const radiusM = typeof radius === "number" && Number.isFinite(radius) ? radius : 12000;
+  const radiusLabel = radiusM % 1000 === 0 ? `${radiusM / 1000} km` : `${radiusM} m`;
 
   return (
     <div className="app-shell">
@@ -165,8 +167,8 @@ export default function App() {
               <h2 className="panel-title">Pick your spot</h2>
               <p className="panel-desc">
                 Search an area to jump the map, then click anywhere to set your
-                starting point. Travxy will search up to 15 km around that point
-                and build a route.
+                starting point. Travxy will search up to {radiusLabel} around that
+                point and build a route.
               </p>
             </div>
 
@@ -174,6 +176,7 @@ export default function App() {
               <MapPicker
                 lon={Number(lon)}
                 lat={Number(lat)}
+                radiusM={radiusM}
                 onChange={(newLon, newLat) => {
                   setLon(newLon);
                   setLat(newLat);
