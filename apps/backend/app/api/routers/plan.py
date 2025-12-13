@@ -256,12 +256,23 @@ async def plan_trip(req: TripRequest) -> PlanResponse:
         # Optional: store rating in notes (helps you debug quality quickly)
         rating = item.get("rating")
         rating_count = item.get("user_ratings_total")
-        notes = None
+        notes_parts: list[str] = []
+
         if rating is not None:
             if rating_count is not None:
-                notes = f"rating {rating} ({rating_count})"
+                notes_parts.append(f"rating {rating} ({rating_count})")
             else:
-                notes = f"rating {rating}"
+                notes_parts.append(f"rating {rating}")
+
+        # naive source label for debugging
+        if "user_ratings_total" in item or "rating" in item:
+            notes_parts.append("src google")
+        elif any("." in c for c in (item.get("categories") or [])):
+            notes_parts.append("src geoapify")
+        else:
+            notes_parts.append("src otm")
+
+        notes = " | ".join(notes_parts) if notes_parts else None
 
         activities.append(
             Activity(
