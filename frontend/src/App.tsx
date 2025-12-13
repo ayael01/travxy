@@ -1,6 +1,8 @@
+import type { Map as LeafletMap } from "leaflet";
 import { useState } from "react";
 import MapPicker from "./components/MapPicker";
 import { planTrip } from "./services/api";
+import { geocode, type GeocodeResult } from "./services/geocode";
 import type { Activity, PlanResponse, TripRequest } from "./types";
 
 function ActivityRow({ a }: { a: Activity }) {
@@ -61,6 +63,15 @@ export default function App() {
   const [err, setErr] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(true);
 
+  // Map instance (so we can pan/zoom after search)
+  const [map, setMap] = useState<LeafletMap | null>(null);
+
+  // Search area (geocoding)
+  const [search, setSearch] = useState("");
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchErr, setSearchErr] = useState<string | null>(null);
+  const [searchResults, setSearchResults] = useState<GeocodeResult[]>([]);
+
   async function onPlan(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -86,6 +97,43 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function onSearch(e: React.FormEvent) {
+    e.preventDefault();
+    setSearchLoading(true);
+    setSearchErr(null);
+    setSearchResults([]);
+
+    try {
+      const res = await geocode(search);
+      setSearchResults(res);
+
+      // Auto-jump to the first result (user can still pick another)
+      if (res[0]) {
+        chooseResult(res[0]);
+      }
+    } catch (e: any) {
+      setSearchErr(e.message || "Search failed");
+    } finally {
+      setSearchLoading(false);
+    }
+  }
+
+  function chooseResult(r: GeocodeResult) {
+    const newLat = Number(r.lat);
+    const newLon = Number(r.lon);
+
+    if (Number.isFinite(newLat) && Number.isFinite(newLon)) {
+      if (map) {
+        map.setView([newLat, newLon], 13);
+      }
+      setLat(newLat);
+      setLon(newLon);
+    }
+
+    // Keep results visible if you want; for MVP it's nicer to collapse.
+    setSearchResults([]);
   }
 
   const day = data?.itinerary?.[0];
@@ -116,8 +164,8 @@ export default function App() {
             <div className="panel-map-header">
               <h2 className="panel-title">Pick your spot</h2>
               <p className="panel-desc">
-                Click anywhere on the map, or adjust the coordinates in the
-                trip settings. Travxy will search up to 15 km around that point
+                Search an area to jump the map, then click anywhere to set your
+                starting point. Travxy will search up to 15 km around that point
                 and build a route.
               </p>
             </div>
@@ -130,12 +178,16 @@ export default function App() {
                   setLon(newLon);
                   setLat(newLat);
                 }}
+                onMapReady={(m) => setMap(m)}
               />
 
               {/* Floating trip settings card */}
               <div
                 className={
-                  "settings-float" + (settingsOpen ? " settings-float-open" : " settings-float-closed")
+                  "settings-float" +
+                  (settingsOpen
+                    ? " settings-float-open"
+                    : " settings-float-closed")
                 }
               >
                 <div className="settings-float-header">
@@ -151,11 +203,60 @@ export default function App() {
                 </div>
 
                 <p className="panel-desc settings-float-desc">
-                  Adjust the starting point and what you are in the mood for,
+                  Search an area, adjust the starting point, choose interests,
                   then generate your day.
                 </p>
 
-                <form onSubmit={onPlan} className="form-grid">
+                {/* Area search */}
+                <form onSubmit={onSearch} className="form-grid">
+                  <label className="form-label">
+                    <span>Search area</span>
+                    <input
+                      className="input"
+                      type="text"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Tel Aviv, Central Park, Eilat..."
+                    />
+                    <div className="form-hint">
+                      Type a place name/address and hit Go. Then click on the
+                      map to refine the exact point.
+                    </div>
+                  </label>
+
+                  <button
+                    type="submit"
+                    disabled={searchLoading || !search.trim()}
+                    className="btn-primary"
+                  >
+                    {searchLoading ? "Searching..." : "Go"}
+                  </button>
+
+                  {searchErr && (
+                    <div className="alert alert-error">
+                      <strong>Oops.</strong> {searchErr}
+                    </div>
+                  )}
+
+                  {searchResults.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {searchResults.map((r, idx) => (
+                        <button
+                          key={`${r.lat}-${r.lon}-${idx}`}
+                          type="button"
+                          onClick={() => chooseResult(r)}
+                          className="activity-card"
+                          style={{ textAlign: "left", cursor: "pointer" }}
+                        >
+                          {r.display_name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </form>
+
+                {/* Existing trip settings */}
+                <form onSubmit={onPlan} className="form-grid" style={{ marginTop: 12 }}>
                   <div className="form-row">
                     <label className="form-label">
                       <span>Longitude</span>
@@ -193,11 +294,7 @@ export default function App() {
                     </div>
                   </label>
 
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="btn-primary"
-                  >
+                  <button type="submit" disabled={loading} className="btn-primary">
                     {loading ? "Planning your perfect day..." : "Plan my day"}
                   </button>
 
@@ -258,7 +355,7 @@ export default function App() {
               <div className="empty-state">
                 <div className="empty-title">No plan yet</div>
                 <div className="empty-sub">
-                  Drop a pin and hit "Plan my day" to generate an itinerary.
+                  Search an area, drop a pin, and hit "Plan my day".
                 </div>
               </div>
             )}

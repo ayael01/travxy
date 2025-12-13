@@ -26,6 +26,7 @@ type Props = {
     lon: number;
     lat: number;
     onChange: (lon: number, lat: number) => void;
+    onMapReady?: (map: LeafletMap) => void;
 };
 
 function ClickHandler({ onChange }: { onChange: (lon: number, lat: number) => void }) {
@@ -38,16 +39,21 @@ function ClickHandler({ onChange }: { onChange: (lon: number, lat: number) => vo
     return null;
 }
 
-export default function MapPicker({ lon, lat, onChange }: Props) {
+export default function MapPicker({ lon, lat, onChange, onMapReady }: Props) {
     const center: LatLngExpression = useMemo(() => [lat, lon], [lat, lon]);
     const mapRef = useRef<LeafletMap | null>(null);
 
-    // Keep map view in sync when lon/lat change from inputs
     useEffect(() => {
         if (mapRef.current) {
             mapRef.current.setView(center);
         }
     }, [center]);
+
+    useEffect(() => {
+        if (mapRef.current && onMapReady) {
+            onMapReady(mapRef.current);
+        }
+    }, [onMapReady]);
 
     return (
         <MapContainer
