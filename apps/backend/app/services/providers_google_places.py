@@ -91,14 +91,16 @@ def _extract_unsupported_types(message: str) -> list[str]:
 
 
 class GooglePlacesProvider:
-    async def search_radius(
-        self, *, lon: float, lat: float, radius_m: int, kinds: str | None, limit: int
+    async def _search_nearby(
+        self,
+        *,
+        lon: float,
+        lat: float,
+        radius_m: int,
+        included_types: list[str],
+        max_result_count: int,
     ) -> list[dict[str, Any]]:
-        if not GOOGLE_MAPS_API_KEY:
-            return []
-
         url = f"{GOOGLE_PLACES_API_BASE}/places:searchNearby"
-        included_types = _types_from_kinds(kinds)
 
         payload: dict[str, Any] = {
             "locationRestriction": {
@@ -107,7 +109,7 @@ class GooglePlacesProvider:
                     "radius": float(radius_m),
                 }
             },
-            "maxResultCount": int(min(max(limit, 1), 20)),
+            "maxResultCount": int(min(max(max_result_count, 1), 20)),
             "includedTypes": included_types[:10],
             "rankPreference": "POPULARITY",
         }
@@ -128,7 +130,6 @@ class GooglePlacesProvider:
         }
 
         async with httpx.AsyncClient(timeout=20) as client:
-            # 1st attempt
             if DEBUG:
                 safe_headers = {**headers, "X-Goog-Api-Key": "****"}
                 logger.debug(f"[GooglePlaces] POST {url} headers={safe_headers} payload={payload}")
@@ -195,6 +196,48 @@ class GooglePlacesProvider:
                 }
             )
 
+        out.sort(key=lambda it: it.get("distance") or 1e12)
+        return out
+
+    async def search_radius(
+        self, *, lon: float, lat: float, radius_m: int, kinds: str | None, limit: int
+    ) -> list[dict[str, Any]]:
+        if not GOOGLE_MAPS_API_KEY:
+            return []
+
+        included_types = _types_from_kinds(kinds)
+
+        # Calling searchNearby with many includedTypes returns a single ranked list (and is capped),
+        # which can be unstable between nearby points. For better coverage per "kind", query each
+        # includedType separately, then merge/dedupe.
+        types = included_types[:10]
+        if len(types) <= 1:
+            return await self._search_nearby(
+                lon=lon, lat=lat, radius_m=radius_m, included_types=types, max_result_count=limit
+            )
+
+        merged_by_id: dict[str, dict[str, Any]] = {}
+        for t in types:
+            chunk = await self._search_nearby(
+                lon=lon, lat=lat, radius_m=radius_m, included_types=[t], max_result_count=20
+            )
+            for it in chunk:
+                pid = str(it.get("xid") or "")
+                if not pid:
+                    continue
+                if pid in merged_by_id:
+                    existing = merged_by_id[pid]
+                    existing_types = existing.get("categories") or []
+                    new_types = it.get("categories") or []
+                    if isinstance(existing_types, list) and isinstance(new_types, list):
+                        existing["categories"] = sorted(
+                            {*map(str, existing_types), *map(str, new_types)}
+                        )
+                        existing["kinds"] = ",".join(existing["categories"])
+                    continue
+                merged_by_id[pid] = it
+
+        out = list(merged_by_id.values())
         out.sort(key=lambda it: it.get("distance") or 1e12)
         return out
 

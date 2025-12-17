@@ -152,6 +152,32 @@ def _sort_key(it: dict[str, Any]) -> tuple[float, float, int]:
     return (dist, -rating, -rating_count)
 
 
+def _rating_sort_key(it: dict[str, Any]) -> tuple[float, int, float]:
+    """
+    Prefer:
+    - higher rating
+    - more ratings
+    - closer distance (tie-break)
+    """
+    rating = float(it.get("rating") or 0.0)
+    rating_count = int(it.get("user_ratings_total") or 0)
+    dist = float(it.get("distance") or 1e12)
+    return (-rating, -rating_count, dist)
+
+
+def _interest_target_types(interest: str) -> set[ActivityType]:
+    i = (interest or "").strip().lower()
+    if i in {"food"}:
+        return {"restaurant"}
+    if i in {"views", "view", "viewpoints"}:
+        return {"viewpoint", "hiking"}
+    if i in {"hiking", "nature"}:
+        return {"hiking", "viewpoint"}
+    if i in {"culture", "history", "museum", "museums"}:
+        return {"attraction"}
+    return set()
+
+
 @router.post("/plan_trip", response_model=PlanResponse)
 async def plan_trip(req: TripRequest) -> PlanResponse:
     if not (GOOGLE_MAPS_API_KEY or GEOAPIFY_API_KEY or OPENTRIPMAP_API_KEY):
@@ -173,6 +199,7 @@ async def plan_trip(req: TripRequest) -> PlanResponse:
     providers = build_providers_chain()
     raw: list[dict[str, Any]] = []
     errors: list[str] = []
+    provider_used: str | None = None
 
     for provider in providers:
         try:
@@ -184,6 +211,7 @@ async def plan_trip(req: TripRequest) -> PlanResponse:
                 limit=30,
             )
             if raw:
+                provider_used = provider.__class__.__name__
                 break
         except Exception as e:
             errors.append(f"{provider.__class__.__name__}: {e}")
@@ -244,8 +272,65 @@ async def plan_trip(req: TripRequest) -> PlanResponse:
     # Sort: distance first, then Google quality signals if present
     cleaned.sort(key=_sort_key)
 
+    # Select "top rated per user interest" before turning candidates into activities.
+    # This makes results more stable and avoids one category (e.g. restaurants) dominating.
+    max_stops = 6
+    interests = [s.strip().lower() for s in (req.interests or []) if s and s.strip()]
+    unique_interests: list[str] = []
+    for s in interests:
+        if s not in unique_interests:
+            unique_interests.append(s)
+    interest_targets = {i: _interest_target_types(i) for i in unique_interests}
+
+    # Precompute inferred type once per item.
+    for it in cleaned:
+        it["_inferred_type"] = infer_activity_type(it.get("kinds") or "")
+
+    per_interest_quota = 0
+    if unique_interests:
+        per_interest_quota = max(1, max_stops // len(unique_interests))
+
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[str] = set()
+
+    selected_counts: dict[str, int] = {}
+    for interest in unique_interests:
+        targets = interest_targets.get(interest) or set()
+        if not targets:
+            continue
+        bucket = [it for it in cleaned if it.get("_inferred_type") in targets]
+        bucket.sort(key=_rating_sort_key)
+        take = bucket[:per_interest_quota]
+        kept = 0
+        for it in take:
+            pid = str(it.get("xid") or "")
+            if pid and pid in selected_ids:
+                continue
+            if pid:
+                selected_ids.add(pid)
+            selected.append(it)
+            kept += 1
+        selected_counts[interest] = kept
+
+    # Fill remaining slots with best overall by rating (but keep variety already chosen).
+    if len(selected) < max_stops:
+        remainder = list(cleaned)
+        remainder.sort(key=_rating_sort_key)
+        for it in remainder:
+            if len(selected) >= max_stops:
+                break
+            pid = str(it.get("xid") or "")
+            if pid and pid in selected_ids:
+                continue
+            if pid:
+                selected_ids.add(pid)
+            selected.append(it)
+
+    # Final ordering: closer first (more realistic day flow for MVP).
+    selected.sort(key=_sort_key)
+
     activities: list[Activity] = []
-    for item in cleaned:
+    for item in selected:
         xid = item.get("xid")
         point = item.get("point") or {}
         name = item.get("name") or "Unnamed place"
@@ -308,6 +393,10 @@ async def plan_trip(req: TripRequest) -> PlanResponse:
                 "travel_mode": req.travel_mode,
                 "geometry_type": req.geometry.get("type"),
                 "radius_m": DEFAULT_SEARCH_RADIUS_M,
+                "provider": provider_used,
+                "raw_count": len(raw),
+                "cleaned_count": len(cleaned),
+                "selected_counts": selected_counts,
                 "note": note,
             },
             itinerary=[day],
@@ -324,6 +413,10 @@ async def plan_trip(req: TripRequest) -> PlanResponse:
             "travel_mode": req.travel_mode,
             "geometry_type": req.geometry.get("type"),
             "radius_m": DEFAULT_SEARCH_RADIUS_M,
+            "provider": provider_used,
+            "raw_count": len(raw),
+            "cleaned_count": len(cleaned),
+            "selected_counts": selected_counts,
         },
         itinerary=[day],
         status="ok",
