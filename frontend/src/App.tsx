@@ -3,42 +3,31 @@ import { useState } from "react";
 import MapPicker from "./components/MapPicker";
 import { planTrip } from "./services/api";
 import { geocode, type GeocodeResult } from "./services/geocode";
-import type { Activity, PlanResponse, TripRequest } from "./types";
+import type { Candidate, CandidatesResponse, TripRequest } from "./types";
 
-function ActivityRow({ a }: { a: Activity }) {
-  const [lon, lat] = a.location;
-
-  const typeMeta: Record<
-    Activity["type"],
-    { label: string; emoji: string; color: string }
-  > = {
-    hiking: { label: "Hiking", emoji: "🥾", color: "#22c55e" },
-    restaurant: { label: "Food", emoji: "🍽️", color: "#f97316" },
-    attraction: { label: "Attraction", emoji: "📍", color: "#3b82f6" },
-    viewpoint: { label: "Viewpoint", emoji: "🌄", color: "#a855f7" },
-    lodging: { label: "Lodging", emoji: "🛏️", color: "#eab308" },
-  };
-
-  const meta = typeMeta[a.type];
+function CandidateRow({ c }: { c: Candidate }) {
+  const [lon, lat] = c.location;
   const mapsUrl = `https://www.google.com/maps?q=${lat},${lon}`;
+  const rating =
+    c.rating != null
+      ? `${c.rating}${c.user_ratings_total != null ? ` (${c.user_ratings_total})` : ""}`
+      : null;
 
   return (
-    <div className="activity-card" style={{ borderLeftColor: meta.color }}>
+    <div className="activity-card">
       <div className="activity-main">
         <div className="activity-icon">
-          <span>{meta.emoji}</span>
+          <span>•</span>
         </div>
         <div className="activity-text">
-          <div className="activity-title">{a.name}</div>
+          <div className="activity-title">{c.name}</div>
           <div className="activity-sub">
-            <span className="activity-pill">{meta.label}</span>
-            <span>• {a.duration_minutes} min</span>
-            <a
-              href={mapsUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="activity-link"
-            >
+            <span className="activity-pill">{c.inferred_type}</span>
+            {typeof c.distance_m === "number" ? (
+              <span>• {(c.distance_m / 1000).toFixed(2)} km</span>
+            ) : null}
+            {rating ? <span>• rating {rating}</span> : null}
+            <a href={mapsUrl} target="_blank" rel="noreferrer" className="activity-link">
               View on map
             </a>
           </div>
@@ -47,9 +36,6 @@ function ActivityRow({ a }: { a: Activity }) {
           </div>
         </div>
       </div>
-      {a.source_id ? (
-        <div className="activity-meta">id: {a.source_id.slice(0, 10)}…</div>
-      ) : null}
     </div>
   );
 }
@@ -59,7 +45,7 @@ export default function App() {
   const [lat, setLat] = useState(30.61708778782791);
   const [interests, setInterests] = useState("views,food,culture");
   const [loading, setLoading] = useState(false);
-  const [data, setData] = useState<PlanResponse | null>(null);
+  const [candidatesData, setCandidatesData] = useState<CandidatesResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(true);
 
@@ -76,7 +62,7 @@ export default function App() {
     e.preventDefault();
     setLoading(true);
     setErr(null);
-    setData(null);
+    setCandidatesData(null);
 
     const payload: TripRequest = {
       geometry: { type: "Point", coordinates: [Number(lon), Number(lat)] },
@@ -90,8 +76,8 @@ export default function App() {
     };
 
     try {
-      const res = await planTrip(payload);
-      setData(res);
+      const res = await planTrip(payload, 200);
+      setCandidatesData(res);
     } catch (e: any) {
       setErr(e.message || "Request failed");
     } finally {
@@ -136,11 +122,12 @@ export default function App() {
     setSearchResults([]);
   }
 
-  const day = data?.itinerary?.[0];
-  const activities = day?.activities ?? [];
-  const radius = (data?.query?.["radius_m"] as number | undefined) ?? undefined;
+  const radius =
+    (candidatesData?.query?.["radius_m"] as number | undefined) ??
+    undefined;
   const radiusM = typeof radius === "number" && Number.isFinite(radius) ? radius : 12000;
   const radiusLabel = radiusM % 1000 === 0 ? `${radiusM / 1000} km` : `${radiusM} m`;
+  const candidates = candidatesData?.candidates ?? [];
 
   return (
     <div className="app-shell">
@@ -298,7 +285,7 @@ export default function App() {
                   </label>
 
                   <button type="submit" disabled={loading} className="btn-primary">
-                    {loading ? "Planning your perfect day..." : "Plan my day"}
+                    {loading ? "Fetching candidates..." : "Plan my day"}
                   </button>
 
                   {err && (
@@ -307,18 +294,16 @@ export default function App() {
                     </div>
                   )}
 
-                  {data && (
+                  {candidatesData && (
                     <div className="summary-chip">
                       <span>
                         Radius: {radius ? `${radius} m` : "unknown"} • Status:{" "}
-                        {data.status}
+                        {candidatesData?.status}
                       </span>
-                      {day && (
-                        <span>
-                          Total: {day.total_duration_hours.toFixed(1)} h •{" "}
-                          {activities.length} stops
-                        </span>
-                      )}
+                      <span>
+                        Candidates: {candidates.length} • Provider:{" "}
+                        {(candidatesData.query?.["provider"] as string) ?? "unknown"}
+                      </span>
                     </div>
                   )}
                 </form>
@@ -337,46 +322,38 @@ export default function App() {
             </div>
           </section>
 
-          {/* Itinerary section */}
+          {/* Results section */}
           <section className="panel panel-itinerary">
             <div className="panel-itinerary-header">
               <div>
-                <h2 className="panel-title">Your day plan</h2>
+                <h2 className="panel-title">Candidates</h2>
                 <p className="panel-desc">
-                  Activities are ordered for a smooth, realistic flow. You can
-                  open each stop in Google Maps.
+                  Raw places fetched from providers (with inferred type).
                 </p>
               </div>
-              {day && (
-                <div className="day-badge">
-                  Day {day.day} • {day.total_duration_hours.toFixed(1)} h
-                </div>
-              )}
             </div>
 
-            {!data && (
+            {!candidatesData && (
               <div className="empty-state">
-                <div className="empty-title">No plan yet</div>
+                <div className="empty-title">No data yet</div>
                 <div className="empty-sub">
-                  Search an area, drop a pin, and hit "Plan my day".
+                  Search an area, drop a pin, and hit "Plan my day" to fetch
+                  candidates for the AI stage.
                 </div>
               </div>
             )}
 
-            {data && activities.length === 0 && (
+            {candidatesData && candidates.length === 0 && (
               <div className="empty-state">
-                <div className="empty-title">No activities found</div>
-                <div className="empty-sub">
-                  Try moving the point closer to a city or adjusting your
-                  interests.
-                </div>
+                <div className="empty-title">No candidates found</div>
+                <div className="empty-sub">Try moving the point or increasing backend limit.</div>
               </div>
             )}
 
-            {activities.length > 0 && (
+            {candidates.length > 0 && (
               <div className="timeline">
-                {activities.map((a, idx) => (
-                  <ActivityRow key={idx} a={a} />
+                {candidates.map((c, idx) => (
+                  <CandidateRow key={`${c.xid ?? "noid"}-${idx}`} c={c} />
                 ))}
               </div>
             )}

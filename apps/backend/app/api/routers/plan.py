@@ -9,10 +9,10 @@ from app.core.config import (
     OPENTRIPMAP_API_KEY,
     PLACES_FALLBACK,
 )
-from app.schemas.trip import Activity, DayPlan, PlanResponse, TripRequest
+from app.schemas.candidates import Candidate, CandidatesResponse
+from app.schemas.trip import TripRequest
 from app.services.opentripmap import compose_kinds, extract_origin
 from app.services.providers_factory import build_providers_chain
-from app.utils.duration import default_visit_duration
 from fastapi import APIRouter, HTTPException
 
 router = APIRouter()
@@ -152,63 +152,23 @@ def _sort_key(it: dict[str, Any]) -> tuple[float, float, int]:
     return (dist, -rating, -rating_count)
 
 
-def _rating_sort_key(it: dict[str, Any]) -> tuple[float, int, float]:
-    """
-    Prefer:
-    - higher rating
-    - more ratings
-    - closer distance (tie-break)
-    """
-    rating = float(it.get("rating") or 0.0)
-    rating_count = int(it.get("user_ratings_total") or 0)
-    dist = float(it.get("distance") or 1e12)
-    return (-rating, -rating_count, dist)
-
-
-def _interest_target_types(interest: str) -> set[ActivityType]:
-    i = (interest or "").strip().lower()
-    if i in {"food"}:
-        return {"restaurant"}
-    if i in {"views", "view", "viewpoints"}:
-        return {"viewpoint", "hiking"}
-    if i in {"hiking", "nature"}:
-        return {"hiking", "viewpoint"}
-    if i in {"culture", "history", "museum", "museums"}:
-        return {"attraction"}
-    return set()
-
-
-@router.post("/plan_trip", response_model=PlanResponse)
-async def plan_trip(req: TripRequest) -> PlanResponse:
-    if not (GOOGLE_MAPS_API_KEY or GEOAPIFY_API_KEY or OPENTRIPMAP_API_KEY):
-        raise HTTPException(
-            status_code=500,
-            detail="No places provider configured. Please set GOOGLE_MAPS_API_KEY, GEOAPIFY_API_KEY, or OPENTRIPMAP_API_KEY.",
-        )
-
-    try:
-        lon, lat = extract_origin(req.geometry)
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=str(e))
-
-    kinds = compose_kinds(req.interests)
-    logger.warning(
-        f"[PLAN] origin=({lon:.5f},{lat:.5f}) interests={req.interests} -> kinds={kinds}"
-    )
-
+async def _fetch_places(
+    *,
+    lon: float,
+    lat: float,
+    kinds: str | None,
+    radius_m: int,
+    limit: int,
+) -> tuple[list[dict[str, Any]], str | None, list[str]]:
     providers = build_providers_chain()
-    raw: list[dict[str, Any]] = []
     errors: list[str] = []
     provider_used: str | None = None
 
+    raw: list[dict[str, Any]] = []
     for provider in providers:
         try:
             raw = await provider.search_radius(
-                lon=lon,
-                lat=lat,
-                radius_m=DEFAULT_SEARCH_RADIUS_M,
-                kinds=kinds,
-                limit=30,
+                lon=lon, lat=lat, radius_m=radius_m, kinds=kinds, limit=limit
             )
             if raw:
                 provider_used = provider.__class__.__name__
@@ -218,6 +178,10 @@ async def plan_trip(req: TripRequest) -> PlanResponse:
         if not PLACES_FALLBACK:
             break
 
+    return raw, provider_used, errors
+
+
+def _clean_places(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     cleaned: list[dict[str, Any]] = []
     seen_names_coords: set[tuple[str, float, float]] = set()
 
@@ -269,143 +233,70 @@ async def plan_trip(req: TripRequest) -> PlanResponse:
         item["categories"] = cats
         cleaned.append(item)
 
-    # Sort: distance first, then Google quality signals if present
     cleaned.sort(key=_sort_key)
-
-    # Select "top rated per user interest" before turning candidates into activities.
-    # This makes results more stable and avoids one category (e.g. restaurants) dominating.
-    max_stops = 6
-    interests = [s.strip().lower() for s in (req.interests or []) if s and s.strip()]
-    unique_interests: list[str] = []
-    for s in interests:
-        if s not in unique_interests:
-            unique_interests.append(s)
-    interest_targets = {i: _interest_target_types(i) for i in unique_interests}
-
-    # Precompute inferred type once per item.
     for it in cleaned:
         it["_inferred_type"] = infer_activity_type(it.get("kinds") or "")
+    return cleaned
 
-    per_interest_quota = 0
-    if unique_interests:
-        per_interest_quota = max(1, max_stops // len(unique_interests))
 
-    selected: list[dict[str, Any]] = []
-    selected_ids: set[str] = set()
+@router.post("/plan_trip", response_model=CandidatesResponse)
+async def plan_trip(req: TripRequest, limit: int = 200) -> CandidatesResponse:
+    if not (GOOGLE_MAPS_API_KEY or GEOAPIFY_API_KEY or OPENTRIPMAP_API_KEY):
+        raise HTTPException(
+            status_code=500,
+            detail="No places provider configured. Please set GOOGLE_MAPS_API_KEY, GEOAPIFY_API_KEY, or OPENTRIPMAP_API_KEY.",
+        )
 
-    selected_counts: dict[str, int] = {}
-    for interest in unique_interests:
-        targets = interest_targets.get(interest) or set()
-        if not targets:
+    try:
+        lon, lat = extract_origin(req.geometry)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    kinds = compose_kinds(req.interests)
+    logger.warning(
+        f"[PLAN] origin=({lon:.5f},{lat:.5f}) interests={req.interests} -> kinds={kinds}"
+    )
+
+    safe_limit = int(min(max(limit, 1), 200))
+    raw, provider_used, errors = await _fetch_places(
+        lon=lon, lat=lat, kinds=kinds, radius_m=DEFAULT_SEARCH_RADIUS_M, limit=safe_limit
+    )
+    cleaned = _clean_places(raw)
+
+    out: list[Candidate] = []
+    for it in cleaned:
+        p = it.get("point") or {}
+        lon_raw = p.get("lon")
+        lat_raw = p.get("lat")
+        if lon_raw is None or lat_raw is None:
+            # Shouldn't happen due to _clean_places(), but keeps types and runtime safe.
             continue
-        bucket = [it for it in cleaned if it.get("_inferred_type") in targets]
-        bucket.sort(key=_rating_sort_key)
-        take = bucket[:per_interest_quota]
-        kept = 0
-        for it in take:
-            pid = str(it.get("xid") or "")
-            if pid and pid in selected_ids:
-                continue
-            if pid:
-                selected_ids.add(pid)
-            selected.append(it)
-            kept += 1
-        selected_counts[interest] = kept
+        try:
+            lon_f = float(lon_raw)
+            lat_f = float(lat_raw)
+        except (TypeError, ValueError):
+            continue
 
-    # Fill remaining slots with best overall by rating (but keep variety already chosen).
-    if len(selected) < max_stops:
-        remainder = list(cleaned)
-        remainder.sort(key=_rating_sort_key)
-        for it in remainder:
-            if len(selected) >= max_stops:
-                break
-            pid = str(it.get("xid") or "")
-            if pid and pid in selected_ids:
-                continue
-            if pid:
-                selected_ids.add(pid)
-            selected.append(it)
-
-    # Final ordering: closer first (more realistic day flow for MVP).
-    selected.sort(key=_sort_key)
-
-    activities: list[Activity] = []
-    for item in selected:
-        xid = item.get("xid")
-        point = item.get("point") or {}
-        name = item.get("name") or "Unnamed place"
-        kinds_str = item.get("kinds") or ""
-
-        a_type: ActivityType = infer_activity_type(kinds_str)
-
-        # Optional: store rating in notes (helps you debug quality quickly)
-        rating = item.get("rating")
-        rating_count = item.get("user_ratings_total")
-        notes_parts: list[str] = []
-
-        if rating is not None:
-            if rating_count is not None:
-                notes_parts.append(f"rating {rating} ({rating_count})")
-            else:
-                notes_parts.append(f"rating {rating}")
-
-        # naive source label for debugging
-        if "user_ratings_total" in item or "rating" in item:
-            notes_parts.append("src google")
-        elif any("." in c for c in (item.get("categories") or [])):
-            notes_parts.append("src geoapify")
-        else:
-            notes_parts.append("src otm")
-
-        notes = " | ".join(notes_parts) if notes_parts else None
-
-        activities.append(
-            Activity(
-                type=a_type,
-                name=name,
-                duration_minutes=default_visit_duration(kinds_str),
-                location=[float(point["lon"]), float(point["lat"])],
-                source_id=xid if xid else None,
-                notes=notes,
+        dist_raw = it.get("distance")
+        rating_raw = it.get("rating")
+        urt_raw = it.get("user_ratings_total")
+        inferred = it.get("_inferred_type") or infer_activity_type(it.get("kinds") or "")
+        out.append(
+            Candidate(
+                xid=str(it.get("xid") or "") or None,
+                name=str(it.get("name") or "Unnamed place"),
+                location=[lon_f, lat_f],
+                distance_m=float(dist_raw) if dist_raw is not None else None,
+                inferred_type=inferred,
+                kinds=str(it.get("kinds") or "") or None,
+                categories=[str(c) for c in (it.get("categories") or [])],
+                rating=float(rating_raw) if rating_raw is not None else None,
+                user_ratings_total=int(urt_raw) if urt_raw is not None else None,
+                provider=provider_used,
             )
         )
-        if len(activities) >= 6:
-            break
 
-    total = 0
-    kept: list[Activity] = []
-    for a in activities:
-        if total + a.duration_minutes > 7 * 60:
-            break
-        kept.append(a)
-        total += a.duration_minutes
-
-    if not kept:
-        day = DayPlan(day=1, total_duration_hours=0, activities=[])
-        note = "No results found in area."
-        if errors:
-            note += f" Errors: {' | '.join(errors)}"
-        return PlanResponse(
-            query={
-                "days": req.days,
-                "pace": req.pace,
-                "interests": req.interests,
-                "travel_mode": req.travel_mode,
-                "geometry_type": req.geometry.get("type"),
-                "radius_m": DEFAULT_SEARCH_RADIUS_M,
-                "provider": provider_used,
-                "raw_count": len(raw),
-                "cleaned_count": len(cleaned),
-                "selected_counts": selected_counts,
-                "note": note,
-            },
-            itinerary=[day],
-            status="ok",
-        )
-
-    day = DayPlan(day=1, total_duration_hours=round(total / 60.0, 1), activities=kept)
-
-    return PlanResponse(
+    return CandidatesResponse(
         query={
             "days": req.days,
             "pace": req.pace,
@@ -416,8 +307,9 @@ async def plan_trip(req: TripRequest) -> PlanResponse:
             "provider": provider_used,
             "raw_count": len(raw),
             "cleaned_count": len(cleaned),
-            "selected_counts": selected_counts,
+            "limit": safe_limit,
+            "errors": errors,
         },
-        itinerary=[day],
+        candidates=out,
         status="ok",
     )

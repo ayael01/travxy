@@ -1,23 +1,21 @@
 export type ActivityType = "hiking" | "restaurant" | "attraction" | "viewpoint" | "lodging";
 
-export interface Activity {
-    type: ActivityType;
+export interface Candidate {
+    xid?: string | null;
     name: string;
-    duration_minutes: number;
     location: [number, number]; // [lon, lat]
-    source_id?: string | null;
-    notes?: string | null;
+    distance_m?: number | null;
+    inferred_type: ActivityType;
+    kinds?: string | null;
+    categories?: string[];
+    rating?: number | null;
+    user_ratings_total?: number | null;
+    provider?: string | null;
 }
 
-export interface DayPlan {
-    day: number;
-    total_duration_hours: number;
-    activities: Activity[];
-}
-
-export interface PlanResponse {
+export interface CandidatesResponse {
     query: Record<string, unknown>;
-    itinerary: DayPlan[];
+    candidates: Candidate[];
     status: "ok" | "error";
 }
 
