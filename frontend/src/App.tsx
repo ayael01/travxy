@@ -112,6 +112,7 @@ export default function App() {
   const [lockedXids, setLockedXids] = useState<Set<string>>(new Set());
   const [variant, setVariant] = useState(0);
   const [previousItineraries, setPreviousItineraries] = useState<string[][]>([]);
+  const [lastTripKey, setLastTripKey] = useState<string>("");
 
   // Map instance (so we can pan/zoom after search)
   const [map, setMap] = useState<LeafletMap | null>(null);
@@ -122,14 +123,8 @@ export default function App() {
   const [searchErr, setSearchErr] = useState<string | null>(null);
   const [searchResults, setSearchResults] = useState<GeocodeResult[]>([]);
 
-  async function onPlan(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setErr(null);
-    setCandidatesData(null);
-    setItineraryData(null);
-
-    const payload: TripRequest = {
+  function buildTripPayload(): TripRequest {
+    return {
       geometry: { type: "Point", coordinates: [Number(lon), Number(lat)] },
       days: 1,
       pace: "moderate",
@@ -139,13 +134,75 @@ export default function App() {
         .filter(Boolean),
       travel_mode: "car",
     };
+  }
+
+  function tripKeyFor(t: TripRequest): string {
+    return JSON.stringify({
+      lon: Number(t.geometry.coordinates[0]).toFixed(6),
+      lat: Number(t.geometry.coordinates[1]).toFixed(6),
+      interests: [...t.interests].sort(),
+      pace: t.pace,
+      travel_mode: t.travel_mode,
+      days: t.days,
+    });
+  }
+
+  async function runItineraryBuild(tripPayload: TripRequest, cands: CandidatesResponse, v: number) {
+    const locked = Array.from(lockedXids).filter((xid) =>
+      cands.candidates.some((c) => c.xid === xid),
+    );
+
+    const res = await buildItinerary({
+      trip: tripPayload,
+      candidates: cands.candidates,
+      locked_xids: locked,
+      excluded_xids: [],
+      previous_itineraries: previousItineraries,
+      variant: v,
+      max_stops: 6,
+      start_time: "09:30",
+      max_total_minutes: 7 * 60,
+    });
+
+    setItineraryData(res);
+    const xids = (res.itinerary?.[0]?.activities ?? [])
+      .map((a) => a.xid)
+      .filter((x): x is string => Boolean(x));
+    if (xids.length > 0) {
+      setPreviousItineraries((prev) => [...prev, xids]);
+    }
+  }
+
+  async function onPlan(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setErr(null);
+
+    const tripPayload = buildTripPayload();
+    const key = tripKeyFor(tripPayload);
 
     try {
-      const res = await planTrip(payload, 200);
-      setCandidatesData(res);
-      setLockedXids(new Set());
-      setVariant(0);
-      setPreviousItineraries([]);
+      let cands = candidatesData;
+      let v = variant;
+
+      // If trip inputs changed, refetch candidates and reset rebuild state.
+      if (!cands || lastTripKey !== key) {
+        setCandidatesData(null);
+        setItineraryData(null);
+        cands = await planTrip(tripPayload, 200);
+        setCandidatesData(cands);
+        setLockedXids(new Set());
+        setPreviousItineraries([]);
+        v = 0;
+        setVariant(0);
+        setLastTripKey(key);
+      } else {
+        // Same trip: regenerate a new variant using existing candidates.
+        v = v + 1;
+        setVariant(v);
+      }
+
+      await runItineraryBuild(tripPayload, cands, v);
     } catch (e: any) {
       setErr(e.message || "Request failed");
     } finally {
@@ -206,57 +263,6 @@ export default function App() {
       else next.add(xid);
       return next;
     });
-  }
-
-  async function onBuildItinerary(overrideVariant?: number) {
-    if (!candidatesData) return;
-    setLoading(true);
-    setErr(null);
-    setItineraryData(null);
-
-    const tripPayload: TripRequest = {
-      geometry: { type: "Point", coordinates: [Number(lon), Number(lat)] },
-      days: 1,
-      pace: "moderate",
-      interests: interests
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-      travel_mode: "car",
-    };
-
-    try {
-      const locked = Array.from(lockedXids);
-      const v = typeof overrideVariant === "number" ? overrideVariant : variant;
-      const res = await buildItinerary({
-        trip: tripPayload,
-        candidates: candidatesData.candidates,
-        locked_xids: locked,
-        excluded_xids: [],
-        previous_itineraries: previousItineraries,
-        variant: v,
-        max_stops: 6,
-        start_time: "09:30",
-        max_total_minutes: 7 * 60,
-      });
-      setItineraryData(res);
-      const xids = (res.itinerary?.[0]?.activities ?? [])
-        .map((a) => a.xid)
-        .filter((x): x is string => Boolean(x));
-      if (xids.length > 0) {
-        setPreviousItineraries((prev) => [...prev, xids]);
-      }
-    } catch (e: any) {
-      setErr(e.message || "Request failed");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function onRegenerate() {
-    const next = variant + 1;
-    setVariant(next);
-    void onBuildItinerary(next);
   }
 
   return (
@@ -415,25 +421,7 @@ export default function App() {
                   </label>
 
                   <button type="submit" disabled={loading} className="btn-primary">
-                    {loading ? "Fetching candidates..." : "Plan my day"}
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={loading || !candidatesData}
-                    className="btn-primary"
-                    onClick={() => onBuildItinerary()}
-                  >
-                    {loading ? "Building..." : "Build itinerary"}
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={loading || !candidatesData}
-                    className="btn-primary"
-                    onClick={() => onRegenerate()}
-                  >
-                    Regenerate
+                    {loading ? "Planning..." : "Plan my day"}
                   </button>
 
                   {err && (
@@ -533,8 +521,16 @@ export default function App() {
               </div>
             )}
 
-            {candidates.length > 0 && !itineraryData && (
+            {candidates.length > 0 && (
               <div className="timeline">
+                {itineraryData ? (
+                  <div className="activity-card">
+                    <div className="activity-title">Candidates (lock to force inclusion)</div>
+                    <div className="activity-meta">
+                      Locks are applied when you click “Plan my day” again.
+                    </div>
+                  </div>
+                ) : null}
                 {candidates.map((c, idx) => (
                   <CandidateRow
                     key={`${c.xid ?? "noid"}-${idx}`}
