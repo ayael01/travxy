@@ -322,169 +322,171 @@ export default function App() {
                     ? " settings-float-open"
                     : " settings-float-closed")
                 }
-              >
-                <div className="settings-float-header">
-                  <h3 className="panel-title">Trip settings</h3>
-                  <button
-                    type="button"
-                    className="settings-float-close"
-                    onClick={() => setSettingsOpen(false)}
-                    aria-label="Hide trip settings"
-                  >
-                    ✕
-                  </button>
-                </div>
+	              >
+	                <div className="settings-float-header">
+	                  <h3 className="panel-title">Trip settings</h3>
+	                  <button
+	                    type="button"
+	                    className="settings-float-close"
+	                    onClick={() => setSettingsOpen(false)}
+	                    aria-label="Hide trip settings"
+	                  >
+	                    ✕
+	                  </button>
+	                </div>
 
-                <p className="panel-desc settings-float-desc">
-                  Search an area, adjust the starting point, choose interests,
-                  then generate your day.
-                </p>
+	                <div className="settings-float-body">
+	                  <p className="panel-desc settings-float-desc">
+	                    Search an area, adjust the starting point, choose interests,
+	                    then generate your day.
+	                  </p>
 
-                {/* Area search */}
-                <form onSubmit={onSearch} className="form-grid">
-                  <label className="form-label">
-                    <span>Search area</span>
-                    <input
-                      className="input"
-                      type="text"
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Tel Aviv, Central Park, Eilat..."
-                    />
-                    <div className="form-hint">
-                      Type a place name/address and hit Go. Then click on the
-                      map to refine the exact point.
-                    </div>
-                  </label>
+	                  {/* Area search */}
+	                  <form onSubmit={onSearch} className="form-grid">
+	                    <label className="form-label">
+	                      <span>Search area</span>
+	                      <input
+	                        className="input"
+	                        type="text"
+	                        value={search}
+	                        onChange={(e) => setSearch(e.target.value)}
+	                        placeholder="Tel Aviv, Central Park, Eilat..."
+	                      />
+	                      <div className="form-hint">
+	                        Type a place name/address and hit Go. Then click on the
+	                        map to refine the exact point.
+	                      </div>
+	                    </label>
 
-                  <button
-                    type="submit"
-                    disabled={searchLoading || !search.trim()}
-                    className="btn-primary"
-                  >
-                    {searchLoading ? "Searching..." : "Go"}
-                  </button>
+	                    <button
+	                      type="submit"
+	                      disabled={searchLoading || !search.trim()}
+	                      className="btn-primary"
+	                    >
+	                      {searchLoading ? "Searching..." : "Go"}
+	                    </button>
 
-                  {searchErr && (
-                    <div className="alert alert-error">
-                      <strong>Oops.</strong> {searchErr}
-                    </div>
-                  )}
+	                    {searchErr && (
+	                      <div className="alert alert-error">
+	                        <strong>Oops.</strong> {searchErr}
+	                      </div>
+	                    )}
 
-                  {searchResults.length > 0 && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {searchResults.map((r, idx) => (
-                        <button
-                          key={`${r.lat}-${r.lon}-${idx}`}
-                          type="button"
-                          onClick={() => chooseResult(r)}
-                          className="activity-card"
-                          style={{ textAlign: "left", cursor: "pointer" }}
-                        >
-                          {r.display_name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </form>
+	                    {searchResults.length > 0 && (
+	                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+	                        {searchResults.map((r, idx) => (
+	                          <button
+	                            key={`${r.lat}-${r.lon}-${idx}`}
+	                            type="button"
+	                            onClick={() => chooseResult(r)}
+	                            className="activity-card"
+	                            style={{ textAlign: "left", cursor: "pointer" }}
+	                          >
+	                            {r.display_name}
+	                          </button>
+	                        ))}
+	                      </div>
+	                    )}
+	                  </form>
 
-                {/* Existing trip settings */}
-                <form onSubmit={onPlan} className="form-grid" style={{ marginTop: 12 }}>
-                  <div className="form-row">
-                    <label className="form-label">
-                      <span>Longitude</span>
-                      <input
-                        className="input"
-                        type="number"
-                        step="0.0001"
-                        value={lon}
-                        onChange={(e) => setLon(Number(e.target.value))}
-                      />
-                    </label>
-                    <label className="form-label">
-                      <span>Latitude</span>
-                      <input
-                        className="input"
-                        type="number"
-                        step="0.0001"
-                        value={lat}
-                        onChange={(e) => setLat(Number(e.target.value))}
-                      />
-                    </label>
-                  </div>
+	                  {/* Existing trip settings */}
+	                  <form onSubmit={onPlan} className="form-grid" style={{ marginTop: 12 }}>
+	                    <div className="form-row">
+	                      <label className="form-label">
+	                        <span>Longitude</span>
+	                        <input
+	                          className="input"
+	                          type="number"
+	                          step="0.0001"
+	                          value={lon}
+	                          onChange={(e) => setLon(Number(e.target.value))}
+	                        />
+	                      </label>
+	                      <label className="form-label">
+	                        <span>Latitude</span>
+	                        <input
+	                          className="input"
+	                          type="number"
+	                          step="0.0001"
+	                          value={lat}
+	                          onChange={(e) => setLat(Number(e.target.value))}
+	                        />
+	                      </label>
+	                    </div>
 
-                  <label className="form-label">
-                    <span>Radius ({radiusLabel})</span>
-                    <div className="radius-row">
-                      <button
-                        type="button"
-                        className="radius-step-btn"
-                        onClick={() => setRadiusM((v) => clampRadius(v - radiusStep))}
-                        aria-label="Decrease radius"
-                      >
-                        −
-                      </button>
-                      <input
-                        className="input radius-slider"
-                        type="range"
-                        min={radiusMin}
-                        max={radiusMax}
-                        step={radiusStep}
-                        value={radiusM}
-                        onChange={(e) => setRadiusM(clampRadius(Number(e.target.value)))}
-                      />
-                      <button
-                        type="button"
-                        className="radius-step-btn"
-                        onClick={() => setRadiusM((v) => clampRadius(v + radiusStep))}
-                        aria-label="Increase radius"
-                      >
-                        +
-                      </button>
-                    </div>
-                    <div className="form-hint">Drag to adjust the search radius.</div>
-                  </label>
+	                    <label className="form-label">
+	                      <span>Radius ({radiusLabel})</span>
+	                      <div className="radius-row">
+	                        <button
+	                          type="button"
+	                          className="radius-step-btn"
+	                          onClick={() => setRadiusM((v) => clampRadius(v - radiusStep))}
+	                          aria-label="Decrease radius"
+	                        >
+	                          −
+	                        </button>
+	                        <input
+	                          className="input radius-slider"
+	                          type="range"
+	                          min={radiusMin}
+	                          max={radiusMax}
+	                          step={radiusStep}
+	                          value={radiusM}
+	                          onChange={(e) => setRadiusM(clampRadius(Number(e.target.value)))}
+	                        />
+	                        <button
+	                          type="button"
+	                          className="radius-step-btn"
+	                          onClick={() => setRadiusM((v) => clampRadius(v + radiusStep))}
+	                          aria-label="Increase radius"
+	                        >
+	                          +
+	                        </button>
+	                      </div>
+	                      <div className="form-hint">Drag to adjust the search radius.</div>
+	                    </label>
 
-                  <label className="form-label">
-                    <span>Interests</span>
-                    <input
-                      className="input"
-                      type="text"
-                      value={interests}
-                      onChange={(e) => setInterests(e.target.value)}
-                      placeholder="hiking,views,food"
-                    />
-                    <div className="form-hint">
-                      Comma separated - for now we keep it simple.
-                    </div>
-                  </label>
+	                    <label className="form-label">
+	                      <span>Interests</span>
+	                      <input
+	                        className="input"
+	                        type="text"
+	                        value={interests}
+	                        onChange={(e) => setInterests(e.target.value)}
+	                        placeholder="hiking,views,food"
+	                      />
+	                      <div className="form-hint">
+	                        Comma separated - for now we keep it simple.
+	                      </div>
+	                    </label>
 
-                  <button type="submit" disabled={loading} className="btn-primary">
-                    {loading ? "Planning..." : "Plan my day"}
-                  </button>
+	                    <button type="submit" disabled={loading} className="btn-primary">
+	                      {loading ? "Planning..." : "Plan my day"}
+	                    </button>
 
-                  {err && (
-                    <div className="alert alert-error">
-                      <strong>Oops.</strong> {err}
-                    </div>
-                  )}
+	                    {err && (
+	                      <div className="alert alert-error">
+	                        <strong>Oops.</strong> {err}
+	                      </div>
+	                    )}
 
-                  {candidatesData && (
-                    <div className="summary-chip">
-                      <span>
-                        Radius: {radiusM} m • Status: {candidatesData?.status}
-                      </span>
-                      <span>
-                        Candidates: {candidates.length} • Provider:{" "}
-                        {(candidatesData.query?.["provider"] as string) ?? "unknown"}
-                      </span>
-                      <span>
-                        Locked: {lockedXids.size} • Variant: {variant}
-                      </span>
-                    </div>
-                  )}
-                </form>
-              </div>
+	                    {candidatesData && (
+	                      <div className="summary-chip">
+	                        <span>
+	                          Radius: {radiusM} m • Status: {candidatesData?.status}
+	                        </span>
+	                        <span>
+	                          Candidates: {candidates.length} • Provider:{" "}
+	                          {(candidatesData.query?.["provider"] as string) ?? "unknown"}
+	                        </span>
+	                        <span>
+	                          Locked: {lockedXids.size} • Variant: {variant}
+	                        </span>
+	                      </div>
+	                    )}
+	                  </form>
+	                </div>
+	              </div>
 
               {/* Small pill to reopen settings when they are closed */}
               {!settingsOpen && (
