@@ -19,6 +19,51 @@ export interface CandidatesResponse {
     status: "ok" | "error";
 }
 
+export interface PlannedActivity {
+    xid?: string | null;
+    type: ActivityType;
+    name: string;
+    duration_minutes: number;
+    location: [number, number]; // [lon, lat]
+    provider?: string | null;
+    description?: string | null;
+    why_this?: string | null;
+    notes?: string | null;
+    start_time?: string | null; // "HH:MM"
+    end_time?: string | null; // "HH:MM"
+    travel_minutes_from_prev?: number | null;
+    segment?: string | null;
+}
+
+export interface DayPlan {
+    day: number;
+    title?: string | null;
+    overview?: string | null;
+    tips?: string[];
+    total_duration_hours: number;
+    activities: PlannedActivity[];
+}
+
+export interface ItineraryResponse {
+    query: Record<string, unknown>;
+    title?: string | null;
+    summary?: string | null;
+    itinerary: DayPlan[];
+    status: "ok" | "error";
+}
+
+export interface ItineraryBuildRequest {
+    trip: TripRequest;
+    candidates: Candidate[];
+    locked_xids?: string[];
+    excluded_xids?: string[];
+    previous_itineraries?: string[][];
+    variant?: number;
+    max_stops?: number;
+    start_time?: string;
+    max_total_minutes?: number;
+}
+
 export interface TripRequest {
     geometry: { type: "Point"; coordinates: [number, number] };
     days: number;

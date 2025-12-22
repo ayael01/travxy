@@ -1,11 +1,25 @@
 import type { Map as LeafletMap } from "leaflet";
 import { useState } from "react";
 import MapPicker from "./components/MapPicker";
-import { planTrip } from "./services/api";
+import { buildItinerary, planTrip } from "./services/api";
 import { geocode, type GeocodeResult } from "./services/geocode";
-import type { Candidate, CandidatesResponse, TripRequest } from "./types";
+import type {
+  Candidate,
+  CandidatesResponse,
+  ItineraryResponse,
+  PlannedActivity,
+  TripRequest,
+} from "./types";
 
-function CandidateRow({ c }: { c: Candidate }) {
+function CandidateRow({
+  c,
+  locked,
+  onToggleLock,
+}: {
+  c: Candidate;
+  locked: boolean;
+  onToggleLock: (xid: string) => void;
+}) {
   const [lon, lat] = c.location;
   const mapsUrl = `https://www.google.com/maps?q=${lat},${lon}`;
   const rating =
@@ -17,7 +31,16 @@ function CandidateRow({ c }: { c: Candidate }) {
     <div className="activity-card">
       <div className="activity-main">
         <div className="activity-icon">
-          <span>•</span>
+          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={locked}
+              disabled={!c.xid}
+              onChange={() => c.xid && onToggleLock(c.xid)}
+              aria-label="Lock this candidate"
+            />
+            <span>•</span>
+          </label>
         </div>
         <div className="activity-text">
           <div className="activity-title">{c.name}</div>
@@ -40,14 +63,55 @@ function CandidateRow({ c }: { c: Candidate }) {
   );
 }
 
+function PlannedActivityRow({ a }: { a: PlannedActivity }) {
+  const [lon, lat] = a.location;
+  const mapsUrl = `https://www.google.com/maps?q=${lat},${lon}`;
+  const time =
+    a.start_time && a.end_time ? `${a.start_time}–${a.end_time}` : undefined;
+
+  return (
+    <div className="activity-card">
+      <div className="activity-main">
+        <div className="activity-icon">
+          <span>•</span>
+        </div>
+        <div className="activity-text">
+          <div className="activity-title">{a.name}</div>
+          <div className="activity-sub">
+            <span className="activity-pill">{a.type}</span>
+            {a.segment ? <span>• {a.segment}</span> : null}
+            {time ? <span>• {time}</span> : null}
+            <span>• {a.duration_minutes} min</span>
+            {typeof a.travel_minutes_from_prev === "number" ? (
+              <span>• drive {a.travel_minutes_from_prev} min</span>
+            ) : null}
+            <a href={mapsUrl} target="_blank" rel="noreferrer" className="activity-link">
+              View on map
+            </a>
+          </div>
+          {a.description ? <div className="activity-meta">{a.description}</div> : null}
+          {a.why_this ? <div className="activity-meta">Why: {a.why_this}</div> : null}
+          <div className="activity-coords">
+            {lat.toFixed(5)}, {lon.toFixed(5)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [lon, setLon] = useState(34.80999280643561);
   const [lat, setLat] = useState(30.61708778782791);
   const [interests, setInterests] = useState("views,food,culture");
   const [loading, setLoading] = useState(false);
   const [candidatesData, setCandidatesData] = useState<CandidatesResponse | null>(null);
+  const [itineraryData, setItineraryData] = useState<ItineraryResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(true);
+  const [lockedXids, setLockedXids] = useState<Set<string>>(new Set());
+  const [variant, setVariant] = useState(0);
+  const [previousItineraries, setPreviousItineraries] = useState<string[][]>([]);
 
   // Map instance (so we can pan/zoom after search)
   const [map, setMap] = useState<LeafletMap | null>(null);
@@ -63,6 +127,7 @@ export default function App() {
     setLoading(true);
     setErr(null);
     setCandidatesData(null);
+    setItineraryData(null);
 
     const payload: TripRequest = {
       geometry: { type: "Point", coordinates: [Number(lon), Number(lat)] },
@@ -78,6 +143,9 @@ export default function App() {
     try {
       const res = await planTrip(payload, 200);
       setCandidatesData(res);
+      setLockedXids(new Set());
+      setVariant(0);
+      setPreviousItineraries([]);
     } catch (e: any) {
       setErr(e.message || "Request failed");
     } finally {
@@ -128,6 +196,68 @@ export default function App() {
   const radiusM = typeof radius === "number" && Number.isFinite(radius) ? radius : 12000;
   const radiusLabel = radiusM % 1000 === 0 ? `${radiusM / 1000} km` : `${radiusM} m`;
   const candidates = candidatesData?.candidates ?? [];
+  const day = itineraryData?.itinerary?.[0];
+  const planned = day?.activities ?? [];
+
+  function toggleLock(xid: string) {
+    setLockedXids((prev) => {
+      const next = new Set(prev);
+      if (next.has(xid)) next.delete(xid);
+      else next.add(xid);
+      return next;
+    });
+  }
+
+  async function onBuildItinerary(overrideVariant?: number) {
+    if (!candidatesData) return;
+    setLoading(true);
+    setErr(null);
+    setItineraryData(null);
+
+    const tripPayload: TripRequest = {
+      geometry: { type: "Point", coordinates: [Number(lon), Number(lat)] },
+      days: 1,
+      pace: "moderate",
+      interests: interests
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+      travel_mode: "car",
+    };
+
+    try {
+      const locked = Array.from(lockedXids);
+      const v = typeof overrideVariant === "number" ? overrideVariant : variant;
+      const res = await buildItinerary({
+        trip: tripPayload,
+        candidates: candidatesData.candidates,
+        locked_xids: locked,
+        excluded_xids: [],
+        previous_itineraries: previousItineraries,
+        variant: v,
+        max_stops: 6,
+        start_time: "09:30",
+        max_total_minutes: 7 * 60,
+      });
+      setItineraryData(res);
+      const xids = (res.itinerary?.[0]?.activities ?? [])
+        .map((a) => a.xid)
+        .filter((x): x is string => Boolean(x));
+      if (xids.length > 0) {
+        setPreviousItineraries((prev) => [...prev, xids]);
+      }
+    } catch (e: any) {
+      setErr(e.message || "Request failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function onRegenerate() {
+    const next = variant + 1;
+    setVariant(next);
+    void onBuildItinerary(next);
+  }
 
   return (
     <div className="app-shell">
@@ -288,6 +418,24 @@ export default function App() {
                     {loading ? "Fetching candidates..." : "Plan my day"}
                   </button>
 
+                  <button
+                    type="button"
+                    disabled={loading || !candidatesData}
+                    className="btn-primary"
+                    onClick={() => onBuildItinerary()}
+                  >
+                    {loading ? "Building..." : "Build itinerary"}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={loading || !candidatesData}
+                    className="btn-primary"
+                    onClick={() => onRegenerate()}
+                  >
+                    Regenerate
+                  </button>
+
                   {err && (
                     <div className="alert alert-error">
                       <strong>Oops.</strong> {err}
@@ -303,6 +451,9 @@ export default function App() {
                       <span>
                         Candidates: {candidates.length} • Provider:{" "}
                         {(candidatesData.query?.["provider"] as string) ?? "unknown"}
+                      </span>
+                      <span>
+                        Locked: {lockedXids.size} • Variant: {variant}
                       </span>
                     </div>
                   )}
@@ -326,9 +477,11 @@ export default function App() {
           <section className="panel panel-itinerary">
             <div className="panel-itinerary-header">
               <div>
-                <h2 className="panel-title">Candidates</h2>
+                <h2 className="panel-title">{itineraryData ? "Itinerary" : "Candidates"}</h2>
                 <p className="panel-desc">
-                  Raw places fetched from providers (with inferred type).
+                  {itineraryData
+                    ? "AI stage: planned day using the fetched candidates."
+                    : "Raw places fetched from providers (with inferred type)."}
                 </p>
               </div>
             </div>
@@ -350,10 +503,45 @@ export default function App() {
               </div>
             )}
 
-            {candidates.length > 0 && (
+            {itineraryData && planned.length === 0 && (
+              <div className="empty-state">
+                <div className="empty-title">No itinerary</div>
+                <div className="empty-sub">Try clicking “Build itinerary”.</div>
+              </div>
+            )}
+
+            {planned.length > 0 && (
+              <div className="timeline">
+                {itineraryData?.title ? (
+                  <div className="activity-card">
+                    <div className="activity-title">{itineraryData.title}</div>
+                    {itineraryData.summary ? (
+                      <div className="activity-meta">{itineraryData.summary}</div>
+                    ) : null}
+                    {day?.title ? <div className="activity-meta">{day.title}</div> : null}
+                    {day?.overview ? <div className="activity-meta">{day.overview}</div> : null}
+                    {day?.tips && day.tips.length > 0 ? (
+                      <div className="activity-meta">
+                        Tips: {day.tips.slice(0, 6).join(" • ")}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                {planned.map((a, idx) => (
+                  <PlannedActivityRow key={`${a.xid ?? "noid"}-${idx}`} a={a} />
+                ))}
+              </div>
+            )}
+
+            {candidates.length > 0 && !itineraryData && (
               <div className="timeline">
                 {candidates.map((c, idx) => (
-                  <CandidateRow key={`${c.xid ?? "noid"}-${idx}`} c={c} />
+                  <CandidateRow
+                    key={`${c.xid ?? "noid"}-${idx}`}
+                    c={c}
+                    locked={Boolean(c.xid && lockedXids.has(c.xid))}
+                    onToggleLock={toggleLock}
+                  />
                 ))}
               </div>
             )}

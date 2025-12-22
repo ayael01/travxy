@@ -2,6 +2,7 @@ import logging
 import math
 from typing import Any, Literal
 
+import httpx
 from app.core.config import (
     DEFAULT_SEARCH_RADIUS_M,
     GEOAPIFY_API_KEY,
@@ -10,7 +11,9 @@ from app.core.config import (
     PLACES_FALLBACK,
 )
 from app.schemas.candidates import Candidate, CandidatesResponse
+from app.schemas.itinerary import ItineraryBuildRequest, ItineraryResponse
 from app.schemas.trip import TripRequest
+from app.services.itinerary_planner import build_itinerary
 from app.services.opentripmap import compose_kinds, extract_origin
 from app.services.providers_factory import build_providers_chain
 from fastapi import APIRouter, HTTPException
@@ -313,3 +316,22 @@ async def plan_trip(req: TripRequest, limit: int = 200) -> CandidatesResponse:
         candidates=out,
         status="ok",
     )
+
+
+@router.post("/build_itinerary", response_model=ItineraryResponse)
+async def build_itinerary_route(req: ItineraryBuildRequest) -> ItineraryResponse:
+    # This endpoint is the "AI stage": it takes TripRequest + candidates and builds a day plan.
+    try:
+        return await build_itinerary(req)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "LLM rate-limited (429). Wait a bit and try again, or check your OpenAI "
+                    "billing/usage limits."
+                ),
+            )
+        raise
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
