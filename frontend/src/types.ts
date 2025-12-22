@@ -66,6 +66,7 @@ export interface ItineraryBuildRequest {
 
 export interface TripRequest {
     geometry: { type: "Point"; coordinates: [number, number] };
+    radius_m?: number | null;
     days: number;
     pace: "easy" | "moderate" | "intense";
     interests: string[];

@@ -104,6 +104,7 @@ export default function App() {
   const [lon, setLon] = useState(34.80999280643561);
   const [lat, setLat] = useState(30.61708778782791);
   const [interests, setInterests] = useState("views,food,culture");
+  const [radiusM, setRadiusM] = useState(15000);
   const [loading, setLoading] = useState(false);
   const [candidatesData, setCandidatesData] = useState<CandidatesResponse | null>(null);
   const [itineraryData, setItineraryData] = useState<ItineraryResponse | null>(null);
@@ -126,6 +127,7 @@ export default function App() {
   function buildTripPayload(): TripRequest {
     return {
       geometry: { type: "Point", coordinates: [Number(lon), Number(lat)] },
+      radius_m: radiusM,
       days: 1,
       pace: "moderate",
       interests: interests
@@ -140,6 +142,7 @@ export default function App() {
     return JSON.stringify({
       lon: Number(t.geometry.coordinates[0]).toFixed(6),
       lat: Number(t.geometry.coordinates[1]).toFixed(6),
+      radius_m: t.radius_m ?? null,
       interests: [...t.interests].sort(),
       pace: t.pace,
       travel_mode: t.travel_mode,
@@ -247,14 +250,18 @@ export default function App() {
     setSearchResults([]);
   }
 
-  const radius =
-    (candidatesData?.query?.["radius_m"] as number | undefined) ??
-    undefined;
-  const radiusM = typeof radius === "number" && Number.isFinite(radius) ? radius : 12000;
   const radiusLabel = radiusM % 1000 === 0 ? `${radiusM / 1000} km` : `${radiusM} m`;
   const candidates = candidatesData?.candidates ?? [];
   const day = itineraryData?.itinerary?.[0];
   const planned = day?.activities ?? [];
+
+  const radiusMin = 500;
+  const radiusMax = 50000;
+  const radiusStep = 500;
+
+  function clampRadius(v: number): number {
+    return Math.min(radiusMax, Math.max(radiusMin, v));
+  }
 
   function toggleLock(xid: string) {
     setLockedXids((prev) => {
@@ -407,6 +414,38 @@ export default function App() {
                   </div>
 
                   <label className="form-label">
+                    <span>Radius ({radiusLabel})</span>
+                    <div className="radius-row">
+                      <button
+                        type="button"
+                        className="radius-step-btn"
+                        onClick={() => setRadiusM((v) => clampRadius(v - radiusStep))}
+                        aria-label="Decrease radius"
+                      >
+                        −
+                      </button>
+                      <input
+                        className="input radius-slider"
+                        type="range"
+                        min={radiusMin}
+                        max={radiusMax}
+                        step={radiusStep}
+                        value={radiusM}
+                        onChange={(e) => setRadiusM(clampRadius(Number(e.target.value)))}
+                      />
+                      <button
+                        type="button"
+                        className="radius-step-btn"
+                        onClick={() => setRadiusM((v) => clampRadius(v + radiusStep))}
+                        aria-label="Increase radius"
+                      >
+                        +
+                      </button>
+                    </div>
+                    <div className="form-hint">Drag to adjust the search radius.</div>
+                  </label>
+
+                  <label className="form-label">
                     <span>Interests</span>
                     <input
                       className="input"
@@ -433,8 +472,7 @@ export default function App() {
                   {candidatesData && (
                     <div className="summary-chip">
                       <span>
-                        Radius: {radius ? `${radius} m` : "unknown"} • Status:{" "}
-                        {candidatesData?.status}
+                        Radius: {radiusM} m • Status: {candidatesData?.status}
                       </span>
                       <span>
                         Candidates: {candidates.length} • Provider:{" "}

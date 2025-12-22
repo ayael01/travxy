@@ -22,6 +22,13 @@ router = APIRouter()
 logger = logging.getLogger("travxy.router.plan")
 
 ActivityType = Literal["hiking", "restaurant", "attraction", "viewpoint", "lodging"]
+_MIN_RADIUS_M = 500
+_MAX_RADIUS_M = 50000
+
+
+def _clamp_radius_m(v: int) -> int:
+    return int(min(max(int(v), _MIN_RADIUS_M), _MAX_RADIUS_M))
+
 
 # Geoapify categories look like: "tourism.sights", "catering.restaurant", etc.
 _ALLOWED_CATEGORY_PREFIXES = (
@@ -261,8 +268,11 @@ async def plan_trip(req: TripRequest, limit: int = 200) -> CandidatesResponse:
     )
 
     safe_limit = int(min(max(limit, 1), 200))
+    radius_m = (
+        _clamp_radius_m(req.radius_m) if req.radius_m is not None else DEFAULT_SEARCH_RADIUS_M
+    )
     raw, provider_used, errors = await _fetch_places(
-        lon=lon, lat=lat, kinds=kinds, radius_m=DEFAULT_SEARCH_RADIUS_M, limit=safe_limit
+        lon=lon, lat=lat, kinds=kinds, radius_m=radius_m, limit=safe_limit
     )
     cleaned = _clean_places(raw)
 
@@ -306,7 +316,7 @@ async def plan_trip(req: TripRequest, limit: int = 200) -> CandidatesResponse:
             "interests": req.interests,
             "travel_mode": req.travel_mode,
             "geometry_type": req.geometry.get("type"),
-            "radius_m": DEFAULT_SEARCH_RADIUS_M,
+            "radius_m": radius_m,
             "provider": provider_used,
             "raw_count": len(raw),
             "cleaned_count": len(cleaned),
