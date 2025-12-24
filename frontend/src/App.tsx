@@ -116,6 +116,9 @@ export default function App() {
   const [candidateTypeFilter, setCandidateTypeFilter] = useState<string>("all");
   const [previousItineraries, setPreviousItineraries] = useState<string[][]>([]);
   const [lastTripKey, setLastTripKey] = useState<string>("");
+  const [itineraryOrigin, setItineraryOrigin] = useState<{ lon: number; lat: number } | null>(
+    null,
+  );
 
   // Map instance (so we can pan/zoom after search)
   const [map, setMap] = useState<LeafletMap | null>(null);
@@ -170,6 +173,10 @@ export default function App() {
     });
 
     setItineraryData(res);
+    setItineraryOrigin({
+      lon: Number(tripPayload.geometry.coordinates[0]),
+      lat: Number(tripPayload.geometry.coordinates[1]),
+    });
     const xids = (res.itinerary?.[0]?.activities ?? [])
       .map((a) => a.xid)
       .filter((x): x is string => Boolean(x));
@@ -194,6 +201,7 @@ export default function App() {
       if (!cands || lastTripKey !== key) {
         setCandidatesData(null);
         setItineraryData(null);
+        setItineraryOrigin(null);
         cands = await planTrip(tripPayload, 200);
         setCandidatesData(cands);
         setLockedXids(new Set());
@@ -341,6 +349,8 @@ export default function App() {
                 lon={Number(lon)}
                 lat={Number(lat)}
                 radiusM={radiusM}
+                itinerary={planned}
+                itineraryOrigin={itineraryOrigin ?? undefined}
                 onChange={(newLon, newLat) => {
                   setLon(newLon);
                   setLat(newLat);

@@ -1,5 +1,6 @@
 import logging
 import math
+from collections.abc import Iterable
 from typing import Any, Literal
 
 import httpx
@@ -44,55 +45,121 @@ _BLOCKED_CATEGORY_PREFIXES = (
 )
 
 
-def infer_activity_type(kinds_str: str) -> ActivityType:
+def _iter_tokens(*parts: str) -> Iterable[str]:
+    for p in parts:
+        s = (p or "").strip().lower()
+        if not s:
+            continue
+        for token in s.replace("|", ",").replace("/", ",").replace(";", ",").split(","):
+            t = token.strip()
+            if not t:
+                continue
+            yield t
+            # Geoapify taxonomy uses dotted paths like "tourism.sights".
+            if "." in t:
+                for sub in t.split("."):
+                    sub = sub.strip()
+                    if sub:
+                        yield sub
+
+
+def infer_activity_type(
+    kinds_str: str,
+    *,
+    categories: Iterable[str] | None = None,
+    name: str | None = None,
+) -> ActivityType:
     """
     Works for:
     - OpenTripMap kinds: "view_points", "natural", "catering", ...
     - Geoapify categories: "tourism.sights", "catering.restaurant", ...
     - Google types: "tourist_attraction", "restaurant", "park", "viewpoint", ...
     """
-    k = (kinds_str or "").lower()
+    cat_list = list(categories or [])
+    tokens = set(_iter_tokens(kinds_str, *(str(c) for c in cat_list), name or ""))
+
+    scores: dict[ActivityType, int] = {
+        "restaurant": 0,
+        "viewpoint": 0,
+        "hiking": 0,
+        "attraction": 0,
+        "lodging": 0,
+    }
+
+    def has_any(opts: Iterable[str]) -> bool:
+        return any(o in tokens for o in opts)
 
     # Viewpoints
-    if any(x in k for x in ["view_points", "viewpoint", "observation_tower", "lookout", "scenic"]):
-        return "viewpoint"
+    if has_any({"view_points", "viewpoint", "observation_deck", "observation_tower", "lookout"}):
+        scores["viewpoint"] += 5
+    if has_any({"scenic", "panorama"}):
+        scores["viewpoint"] += 2
 
     # Food
-    if any(
-        x in k
-        for x in [
-            "catering",
+    if has_any(
+        {
             "restaurant",
-            "restaurants",
-            "foods",
             "cafe",
-            "fast_food",
-            "food_court",
+            "coffee_shop",
             "bakery",
             "bar",
-        ]
+            "breakfast_restaurant",
+            "brunch_restaurant",
+            "fast_food_restaurant",
+            "pizza_restaurant",
+            "sandwich_shop",
+            "ice_cream_shop",
+            "food_court",
+            "catering",
+        }
     ):
+        scores["restaurant"] += 5
+
+    # Lodging
+    if has_any({"lodging", "hotel", "resort_hotel", "guest_house", "bed_and_breakfast"}):
+        scores["lodging"] += 4
+    if "campground" in tokens:
+        scores["lodging"] += 2
+        scores["hiking"] += 1
+
+    # Attractions
+    if has_any({"tourist_attraction", "museum", "historical_landmark", "historical_place"}):
+        scores["attraction"] += 4
+    if has_any({"art_gallery", "cultural_center", "performing_arts_theater", "planetarium"}):
+        scores["attraction"] += 3
+    if has_any({"visitor_center", "tourist_information_center"}):
+        scores["attraction"] += 2
+    if has_any({"market", "plaza"}):
+        scores["attraction"] += 2
+
+    # Nature / hiking (parks are a weak signal; hiking_area/trail/national_park are strong)
+    if has_any({"hiking_area", "trail", "national_park", "protected_area", "natural_feature"}):
+        scores["hiking"] += 4
+    if has_any({"park", "forest"}):
+        scores["hiking"] += 1
+    if "sports_activity_location" in tokens:
+        scores["hiking"] += 1
+
+    # Business/service places shouldn't win as hikes just because they offer tours.
+    if has_any({"tour_agency", "travel_agency", "car_rental", "corporate_office"}):
+        scores["attraction"] += 2
+        scores["hiking"] -= 3
+        scores["viewpoint"] -= 2
+
+    if max(scores.values()) <= 0:
+        return "attraction"
+
+    best = max(scores.items(), key=lambda kv: kv[1])[0]
+
+    # Guardrails / tie-breaks
+    if best == "hiking" and scores["hiking"] <= 1 and scores["attraction"] >= 1:
+        # Avoid classifying city squares/urban places as hikes just because of "park".
+        return "attraction"
+    if best == "lodging" and scores["restaurant"] >= scores["lodging"]:
+        # For MVP, treat hotel+restaurant as restaurant if food signal exists.
         return "restaurant"
 
-    # Nature / hiking
-    if any(
-        x in k
-        for x in [
-            "natural",
-            "park",
-            "leisure.park",
-            "national_park",
-            "protected_area",
-            "forest",
-            "trail",
-            "hiking_area",
-            "natural_feature",
-            "campground",
-        ]
-    ):
-        return "hiking"
-
-    return "attraction"
+    return best
 
 
 def _is_noise(kinds_str: str, name: str) -> bool:
@@ -245,7 +312,11 @@ def _clean_places(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     cleaned.sort(key=_sort_key)
     for it in cleaned:
-        it["_inferred_type"] = infer_activity_type(it.get("kinds") or "")
+        it["_inferred_type"] = infer_activity_type(
+            it.get("kinds") or "",
+            categories=it.get("categories") or [],
+            name=it.get("name") or "",
+        )
     return cleaned
 
 
@@ -293,7 +364,11 @@ async def plan_trip(req: TripRequest, limit: int = 200) -> CandidatesResponse:
         dist_raw = it.get("distance")
         rating_raw = it.get("rating")
         urt_raw = it.get("user_ratings_total")
-        inferred = it.get("_inferred_type") or infer_activity_type(it.get("kinds") or "")
+        inferred = it.get("_inferred_type") or infer_activity_type(
+            it.get("kinds") or "",
+            categories=it.get("categories") or [],
+            name=it.get("name") or "",
+        )
         out.append(
             Candidate(
                 xid=str(it.get("xid") or "") or None,

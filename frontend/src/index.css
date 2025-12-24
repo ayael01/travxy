@@ -374,6 +374,27 @@ body {
   padding: 0;
 }
 
+.itinerary-marker {
+  background: transparent;
+  border: 0;
+}
+
+.itinerary-marker-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.95);
+  border: 2px solid rgba(5, 46, 22, 0.35);
+  box-shadow: 0 10px 20px rgba(2, 6, 23, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(2, 6, 23, 0.92);
+  font-weight: 800;
+  font-size: 13px;
+  line-height: 1;
+}
+
 .input::placeholder {
   color: #6b7280;
 }
