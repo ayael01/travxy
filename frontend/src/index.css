@@ -563,6 +563,35 @@ body {
   margin-top: 6px;
 }
 
+.candidates-toolbar {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.candidates-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.candidates-filter-label {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.candidates-filter-select {
+  min-width: 170px;
+}
+
+.candidates-filter-meta {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
 .activity-card {
   position: relative;
   border-radius: 14px;

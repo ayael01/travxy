@@ -113,6 +113,7 @@ export default function App() {
   const [lockedXids, setLockedXids] = useState<Set<string>>(new Set());
   const [variant, setVariant] = useState(0);
   const [resultsTab, setResultsTab] = useState<"itinerary" | "candidates">("itinerary");
+  const [candidateTypeFilter, setCandidateTypeFilter] = useState<string>("all");
   const [previousItineraries, setPreviousItineraries] = useState<string[][]>([]);
   const [lastTripKey, setLastTripKey] = useState<string>("");
 
@@ -258,11 +259,35 @@ export default function App() {
   const hasItinerary = planned.length > 0;
   const hasCandidates = candidates.length > 0;
 
+  const candidateTypeCounts = new Map<string, number>();
+  for (const c of candidates) {
+    const t = c.inferred_type;
+    if (!t) continue;
+    candidateTypeCounts.set(t, (candidateTypeCounts.get(t) ?? 0) + 1);
+  }
+  const candidateTypes = Array.from(candidateTypeCounts.keys()).sort();
+  const candidateTypesKey = candidateTypes.join("|");
+  const visibleCandidates =
+    candidateTypeFilter === "all"
+      ? candidates
+      : candidates.filter((c) => c.inferred_type === candidateTypeFilter);
+
   // Pick a sensible default tab based on what data exists.
   useEffect(() => {
     if (hasItinerary) setResultsTab("itinerary");
     else if (hasCandidates) setResultsTab("candidates");
   }, [hasItinerary, hasCandidates]);
+
+  // Reset/validate candidate filter when a new batch arrives.
+  useEffect(() => {
+    setCandidateTypeFilter("all");
+  }, [candidatesData?.candidates.length]);
+
+  useEffect(() => {
+    if (candidateTypeFilter !== "all" && !candidateTypeCounts.has(candidateTypeFilter)) {
+      setCandidateTypeFilter("all");
+    }
+  }, [candidateTypeFilter, candidateTypesKey]);
 
   const radiusMin = 500;
   const radiusMax = 50000;
@@ -572,6 +597,13 @@ export default function App() {
 	              </div>
 	            )}
 
+	            {resultsTab === "candidates" && candidates.length > 0 && visibleCandidates.length === 0 && (
+	              <div className="empty-state">
+	                <div className="empty-title">No matches</div>
+	                <div className="empty-sub">Try changing the candidate type filter.</div>
+	              </div>
+	            )}
+
 	            {candidatesData && resultsTab === "itinerary" && !hasItinerary && (
 	              <div className="empty-state">
 	                <div className="empty-title">No itinerary</div>
@@ -604,11 +636,31 @@ export default function App() {
 	              </div>
 	            )}
 
-	            {resultsTab === "candidates" && candidates.length > 0 && (
+	            {resultsTab === "candidates" && visibleCandidates.length > 0 && (
 	              <div className="timeline">
 	                <div className="activity-card">
 	                  <div className="activity-title">
 	                    Candidates{itineraryData ? " (lock to force inclusion)" : ""}
+	                  </div>
+	                  <div className="candidates-toolbar">
+	                    <label className="candidates-filter">
+	                      <span className="candidates-filter-label">Type</span>
+	                      <select
+	                        className="input candidates-filter-select"
+	                        value={candidateTypeFilter}
+	                        onChange={(e) => setCandidateTypeFilter(e.target.value)}
+	                      >
+	                        <option value="all">All ({candidates.length})</option>
+	                        {candidateTypes.map((t) => (
+	                          <option key={t} value={t}>
+	                            {t} ({candidateTypeCounts.get(t) ?? 0})
+	                          </option>
+	                        ))}
+	                      </select>
+	                    </label>
+	                    <div className="candidates-filter-meta">
+	                      Showing {visibleCandidates.length} of {candidates.length}
+	                    </div>
 	                  </div>
 	                  {itineraryData ? (
 	                    <div className="activity-meta">
@@ -616,11 +668,11 @@ export default function App() {
 	                    </div>
 	                  ) : null}
 	                </div>
-	                {candidates.map((c, idx) => (
+	                {visibleCandidates.map((c, idx) => (
 	                  <CandidateRow
 	                    key={`${c.xid ?? "noid"}-${idx}`}
 	                    c={c}
-                    locked={Boolean(c.xid && lockedXids.has(c.xid))}
+	                    locked={Boolean(c.xid && lockedXids.has(c.xid))}
                     onToggleLock={toggleLock}
                   />
                 ))}
