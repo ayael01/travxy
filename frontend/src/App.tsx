@@ -1,5 +1,5 @@
 import type { Map as LeafletMap } from "leaflet";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import MapPicker from "./components/MapPicker";
 import { buildItinerary, planTrip } from "./services/api";
 import { geocode, type GeocodeResult } from "./services/geocode";
@@ -112,6 +112,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(true);
   const [lockedXids, setLockedXids] = useState<Set<string>>(new Set());
   const [variant, setVariant] = useState(0);
+  const [resultsTab, setResultsTab] = useState<"itinerary" | "candidates">("itinerary");
   const [previousItineraries, setPreviousItineraries] = useState<string[][]>([]);
   const [lastTripKey, setLastTripKey] = useState<string>("");
 
@@ -254,6 +255,14 @@ export default function App() {
   const candidates = candidatesData?.candidates ?? [];
   const day = itineraryData?.itinerary?.[0];
   const planned = day?.activities ?? [];
+  const hasItinerary = planned.length > 0;
+  const hasCandidates = candidates.length > 0;
+
+  // Pick a sensible default tab based on what data exists.
+  useEffect(() => {
+    if (hasItinerary) setResultsTab("itinerary");
+    else if (hasCandidates) setResultsTab("candidates");
+  }, [hasItinerary, hasCandidates]);
 
   const radiusMin = 500;
   const radiusMax = 50000;
@@ -501,22 +510,54 @@ export default function App() {
             </div>
           </section>
 
-          {/* Results section */}
-          <section className="panel panel-itinerary">
-            <div className="panel-itinerary-header">
-              <div>
-                <h2 className="panel-title">{itineraryData ? "Itinerary" : "Candidates"}</h2>
-                <p className="panel-desc">
-                  {itineraryData
-                    ? "AI stage: planned day using the fetched candidates."
-                    : "Raw places fetched from providers (with inferred type)."}
-                </p>
-              </div>
-            </div>
+	          {/* Results section */}
+	          <section className="panel panel-itinerary">
+	            <div className="panel-itinerary-header">
+	              <div>
+	                <h2 className="panel-title">
+	                  {resultsTab === "itinerary" ? "Itinerary" : "Candidates"}
+	                </h2>
+	                <p className="panel-desc">
+	                  {resultsTab === "itinerary"
+	                    ? "AI stage: planned day using the fetched candidates."
+	                    : "Raw places fetched from providers (with inferred type)."}
+	                </p>
+	              </div>
+	              <div className="results-tabs" role="tablist" aria-label="Results view">
+	                <button
+	                  type="button"
+	                  role="tab"
+	                  aria-selected={resultsTab === "itinerary"}
+	                  className={
+	                    "results-tab" + (resultsTab === "itinerary" ? " results-tab-active" : "")
+	                  }
+	                  onClick={() => setResultsTab("itinerary")}
+	                >
+	                  Itinerary
+	                  {hasItinerary ? (
+	                    <span className="results-tab-badge">{planned.length}</span>
+	                  ) : null}
+	                </button>
+	                <button
+	                  type="button"
+	                  role="tab"
+	                  aria-selected={resultsTab === "candidates"}
+	                  className={
+	                    "results-tab" + (resultsTab === "candidates" ? " results-tab-active" : "")
+	                  }
+	                  onClick={() => setResultsTab("candidates")}
+	                >
+	                  Candidates
+	                  {hasCandidates ? (
+	                    <span className="results-tab-badge">{candidates.length}</span>
+	                  ) : null}
+	                </button>
+	              </div>
+	            </div>
 
-            {!candidatesData && (
-              <div className="empty-state">
-                <div className="empty-title">No data yet</div>
+	            {!candidatesData && (
+	              <div className="empty-state">
+	                <div className="empty-title">No data yet</div>
                 <div className="empty-sub">
                   Search an area, drop a pin, and hit "Plan my day" to fetch
                   candidates for the AI stage.
@@ -524,25 +565,27 @@ export default function App() {
               </div>
             )}
 
-            {candidatesData && candidates.length === 0 && (
-              <div className="empty-state">
-                <div className="empty-title">No candidates found</div>
-                <div className="empty-sub">Try moving the point or increasing backend limit.</div>
-              </div>
-            )}
+	            {candidatesData && candidates.length === 0 && resultsTab === "candidates" && (
+	              <div className="empty-state">
+	                <div className="empty-title">No candidates found</div>
+	                <div className="empty-sub">Try moving the point or increasing backend limit.</div>
+	              </div>
+	            )}
 
-            {itineraryData && planned.length === 0 && (
-              <div className="empty-state">
-                <div className="empty-title">No itinerary</div>
-                <div className="empty-sub">Try clicking “Build itinerary”.</div>
-              </div>
-            )}
+	            {candidatesData && resultsTab === "itinerary" && !hasItinerary && (
+	              <div className="empty-state">
+	                <div className="empty-title">No itinerary</div>
+	                <div className="empty-sub">
+	                  Click “Plan my day” to generate an itinerary from the fetched candidates.
+	                </div>
+	              </div>
+	            )}
 
-            {planned.length > 0 && (
-              <div className="timeline">
-                {itineraryData?.title ? (
-                  <div className="activity-card">
-                    <div className="activity-title">{itineraryData.title}</div>
+	            {resultsTab === "itinerary" && planned.length > 0 && (
+	              <div className="timeline">
+	                {itineraryData?.title ? (
+	                  <div className="activity-card">
+	                    <div className="activity-title">{itineraryData.title}</div>
                     {itineraryData.summary ? (
                       <div className="activity-meta">{itineraryData.summary}</div>
                     ) : null}
@@ -555,26 +598,28 @@ export default function App() {
                     ) : null}
                   </div>
                 ) : null}
-                {planned.map((a, idx) => (
-                  <PlannedActivityRow key={`${a.xid ?? "noid"}-${idx}`} a={a} />
-                ))}
-              </div>
-            )}
+	                {planned.map((a, idx) => (
+	                  <PlannedActivityRow key={`${a.xid ?? "noid"}-${idx}`} a={a} />
+	                ))}
+	              </div>
+	            )}
 
-            {candidates.length > 0 && (
-              <div className="timeline">
-                {itineraryData ? (
-                  <div className="activity-card">
-                    <div className="activity-title">Candidates (lock to force inclusion)</div>
-                    <div className="activity-meta">
-                      Locks are applied when you click “Plan my day” again.
-                    </div>
-                  </div>
-                ) : null}
-                {candidates.map((c, idx) => (
-                  <CandidateRow
-                    key={`${c.xid ?? "noid"}-${idx}`}
-                    c={c}
+	            {resultsTab === "candidates" && candidates.length > 0 && (
+	              <div className="timeline">
+	                <div className="activity-card">
+	                  <div className="activity-title">
+	                    Candidates{itineraryData ? " (lock to force inclusion)" : ""}
+	                  </div>
+	                  {itineraryData ? (
+	                    <div className="activity-meta">
+	                      Locks are applied when you click “Plan my day” again.
+	                    </div>
+	                  ) : null}
+	                </div>
+	                {candidates.map((c, idx) => (
+	                  <CandidateRow
+	                    key={`${c.xid ?? "noid"}-${idx}`}
+	                    c={c}
                     locked={Boolean(c.xid && lockedXids.has(c.xid))}
                     onToggleLock={toggleLock}
                   />
